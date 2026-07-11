@@ -1,0 +1,118 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+};
+
+/** whisper-1 ≈ US$ 0.006 / minuto — timestamps por segmento confiáveis p/ legendas */
+const COST_PER_MINUTE_USD = 0.006;
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  try {
+    const openaiKey = Deno.env.get("OPENAI_API_KEY");
+    if (!openaiKey) {
+      return json({ error: "OPENAI_API_KEY não configurada" }, 500);
+    }
+
+    const form = await req.formData();
+    const audio = form.get("audio");
+    const language = String(form.get("language") ?? "pt");
+    const durationSeconds = Number(form.get("duration_seconds") ?? 0);
+
+    if (!(audio instanceof File)) {
+      return json({ error: "Arquivo de áudio obrigatório" }, 400);
+    }
+
+    const body = new FormData();
+    body.append("file", audio, audio.name || "clip.webm");
+    body.append("model", "whisper-1");
+    body.append("response_format", "verbose_json");
+    body.append("timestamp_granularities[]", "segment");
+    if (language) body.append("language", language);
+
+    const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${openaiKey}` },
+      body,
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return json({ error: "Falha na transcrição", detail: errText }, 502);
+    }
+
+    const data = await res.json();
+    const segments = (data.segments ?? []).map(
+      (s: { start: number; end: number; text: string }) => ({
+        start: s.start,
+        end: s.end,
+        text: String(s.text ?? "").trim(),
+      }),
+    ).filter((s: { text: string }) => s.text.length > 0);
+
+    if (segments.length === 0 && data.text) {
+      segments.push({
+        start: 0,
+        end: Math.max(durationSeconds, 1),
+        text: String(data.text).trim(),
+      });
+    }
+
+    const minutes = Math.max(durationSeconds, 1) / 60;
+    const estimatedCostUsd = Number((minutes * COST_PER_MINUTE_USD).toFixed(6));
+
+    const vtt = toVtt(segments);
+
+    return json({
+      text: data.text ?? "",
+      segments,
+      vtt,
+      model: "whisper-1",
+      estimated_cost_usd: estimatedCostUsd,
+      cost_per_minute_usd: COST_PER_MINUTE_USD,
+    });
+  } catch (error) {
+    return json(
+      { error: error instanceof Error ? error.message : "Erro interno" },
+      500,
+    );
+  }
+});
+
+function toVtt(
+  segments: Array<{ start: number; end: number; text: string }>,
+): string {
+  const lines = ["WEBVTT", ""];
+  segments.forEach((s, i) => {
+    lines.push(String(i + 1));
+    lines.push(`${formatTs(s.start)} --> ${formatTs(s.end)}`);
+    lines.push(s.text);
+    lines.push("");
+  });
+  return lines.join("\n");
+}
+
+function formatTs(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const ms = Math.round((seconds % 1) * 1000);
+  return `${pad(h)}:${pad(m)}:${pad(s)}.${String(ms).padStart(3, "0")}`;
+}
+
+function pad(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+function json(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}

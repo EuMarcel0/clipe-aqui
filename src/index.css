@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Syne", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #12141a;
+  --color-paper: #f3f0ea;
+  --color-mist: #e7e2d8;
+  --color-accent: #0f9f8a;
+  --color-accent-deep: #0b7a6a;
+  --color-warn: #e8a317;
+  --color-danger: #d94b3d;
+  --color-surface: #ffffffcc;
+}
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    font-family: var(--font-body);
+    color: var(--color-ink);
+    background:
+      radial-gradient(1200px 600px at 10% -10%, #c8f5eb 0%, transparent 55%),
+      radial-gradient(900px 500px at 100% 0%, #ffe7b8 0%, transparent 50%),
+      linear-gradient(180deg, #f7f4ee 0%, #ebe6dc 100%);
+    background-attachment: fixed;
+  }
+
+  #root {
+    min-height: 100dvh;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  .glass {
+    background: color-mix(in oklab, white 78%, transparent);
+    backdrop-filter: blur(14px);
+    border: 1px solid color-mix(in oklab, white 55%, #cfc8ba);
+  }
+
+  .grain::before {
+    content: "";
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    opacity: 0.035;
+    z-index: 50;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+}

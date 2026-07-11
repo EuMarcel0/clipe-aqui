@@ -1,0 +1,11 @@
+# Ajustes opcionais do projeto Supabase
+project_id = "egupwrwzcuqazlshhfoq"
+
+[api]
+enabled = true
+
+[functions.transcribe]
+verify_jwt = true
+
+[functions.get-upload-url]
+verify_jwt = true

@@ -95,7 +95,7 @@ export function LibraryPage() {
           <p className="mt-1 text-sm text-muted">Seus clips salvos</p>
         </div>
         <Link
-          to="/"
+          to="/criar"
           className="press inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-2 text-xs font-semibold text-white"
         >
           <Plus className="h-3.5 w-3.5" />
@@ -119,7 +119,7 @@ export function LibraryPage() {
           <p className="mt-4 font-display text-lg font-bold">Nenhum projeto ainda</p>
           <p className="mt-1 text-sm text-muted">Crie seu primeiro clip em segundos.</p>
           <Link
-            to="/"
+            to="/criar"
             className="press mt-5 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-paper"
           >
             <Plus className="h-4 w-4" />

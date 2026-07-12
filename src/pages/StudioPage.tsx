@@ -11,8 +11,8 @@ import {
   updateClip,
   uploadClipToS3,
 } from '../lib/clips'
-import { cutVideoClip, extractAudioRange } from '../lib/ffmpeg'
-import { finalizeClipExport } from '../lib/burnOverlays'
+import { extractAudioRange } from '../lib/ffmpeg'
+import { exportClipFromSource } from '../lib/burnOverlays'
 import { REELS_FRAME } from '../lib/exportPresets'
 import { estimateTranscriptionCostUsd, formatPrecise, segmentsToVtt } from '../lib/format'
 import { getErrorMessage } from '../lib/errors'
@@ -25,13 +25,6 @@ import type {
   WatermarkPosition,
 } from '../types'
 
-type PreparedClip = {
-  blob: Blob
-  start: number
-  end: number
-  fileKey: string
-}
-
 export function StudioPage() {
   const [file, setFile] = useState<File | null>(null)
   const [objectUrl, setObjectUrl] = useState<string | null>(null)
@@ -41,7 +34,6 @@ export function StudioPage() {
   const [duration, setDuration] = useState(0)
   const [step, setStep] = useState<StudioStep>('upload')
   const [captions, setCaptions] = useState<CaptionSegment[]>([])
-  const [preparedClip, setPreparedClip] = useState<PreparedClip | null>(null)
   const [exportPreset, setExportPreset] = useState<ExportPreset>('reels')
   const [watermarkText, setWatermarkText] = useState('')
   const [watermarkPosition, setWatermarkPosition] = useState<WatermarkPosition>('bottom')
@@ -70,7 +62,6 @@ export function StudioPage() {
     if (objectUrl) URL.revokeObjectURL(objectUrl)
     setSavedClip(null)
     setCaptions([])
-    setPreparedClip(null)
     setWatermarkText('')
     setWatermarkPosition('bottom')
     setCostUsd(null)
@@ -102,7 +93,6 @@ export function StudioPage() {
   const onChangeRange = useCallback((s: number, e: number) => {
     setStart(s)
     setEnd(e)
-    setPreparedClip(null)
     setCaptions([])
     setCostUsd(null)
   }, [])
@@ -110,8 +100,6 @@ export function StudioPage() {
   const updateCaptionText = (index: number, text: string) => {
     setCaptions((prev) => prev.map((c, i) => (i === index ? { ...c, text } : c)))
   }
-
-  const fileKeyOf = (f: File) => `${f.name}:${f.size}:${f.lastModified}`
 
   const generateCaptions = async () => {
     if (!file) return
@@ -126,7 +114,6 @@ export function StudioPage() {
       setProgress('Gerando legendas…')
       const result = await transcribeAudio(audio, actualDuration)
 
-      setPreparedClip(null)
       setCaptions(normalizeCaptionSegments(result.segments, actualDuration))
       setCostUsd(result.estimated_cost_usd)
       setStep('captions')
@@ -142,7 +129,7 @@ export function StudioPage() {
     if (!file) return
     setBusy(true)
     setError(null)
-    setProgress('Cortando o vídeo…')
+    setProgress('Preparando seu clip…')
     try {
       const draft = await createClipDraft({
         title: title || 'Clip sem título',
@@ -152,43 +139,19 @@ export function StudioPage() {
         end_seconds: end,
       })
 
-      let blob: Blob
-      const canReuse =
-        preparedClip &&
-        preparedClip.fileKey === fileKeyOf(file) &&
-        Math.abs(preparedClip.start - start) < 0.05 &&
-        Math.abs(preparedClip.end - end) < 0.05
-
-      try {
-        blob = canReuse ? preparedClip.blob : await cutVideoClip(file, start, end)
-      } catch (err) {
-        throw new Error(getErrorMessage(err, 'Não foi possível cortar o vídeo.'))
-      }
-
-      setProgress(
-        captions.length || watermark || exportPreset === 'reels'
-          ? 'Gravando legendas no vídeo…'
-          : 'Finalizando…',
-      )
-
-      try {
-        blob = await finalizeClipExport(blob, {
-          preset: exportPreset,
-          captions,
-          watermark,
-          onProgress: (r) => {
-            if (r < 0.95) {
-              setProgress(`Gravando no vídeo… ${Math.round(r * 100)}%`)
-            } else {
-              setProgress('Enviando…')
-            }
-          },
-        })
-      } catch (err) {
-        throw new Error(
-          getErrorMessage(err, 'Não foi possível preparar o vídeo para salvar.'),
-        )
-      }
+      // Uma passagem no arquivo original (evita Timeout loadeddata no WebM cortado)
+      const blob = await exportClipFromSource(file, start, end, {
+        preset: exportPreset,
+        captions,
+        watermark,
+        onProgress: (r) => {
+          if (r < 0.95) {
+            setProgress(`Gravando no vídeo… ${Math.round(r * 100)}%`)
+          } else {
+            setProgress('Enviando…')
+          }
+        },
+      })
 
       setProgress('Enviando clip…')
 

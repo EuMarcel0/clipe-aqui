@@ -9,7 +9,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="relative mx-auto flex min-h-dvh max-w-lg flex-col px-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-4 sm:max-w-xl">
       <header className="mb-5 flex items-center justify-between gap-3">
-        <Link to="/" className="group flex items-center gap-2.5">
+        <Link to="/criar" className="group flex items-center gap-2.5">
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-accent text-white transition group-hover:scale-[1.03]">
             <span className="font-display text-sm font-bold tracking-tight">CA</span>
           </span>
@@ -33,7 +33,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {user ? (
         <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/6 bg-paper/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl">
           <div className="mx-auto flex max-w-lg items-stretch justify-around px-6 py-2 sm:max-w-xl">
-            <Tab to="/" icon={<Plus className="h-5 w-5" strokeWidth={2.25} />} label="Criar" />
+            <Tab to="/criar" icon={<Plus className="h-5 w-5" strokeWidth={2.25} />} label="Criar" />
             <Tab
               to="/biblioteca"
               icon={<FolderOpen className="h-5 w-5" strokeWidth={2.25} />}

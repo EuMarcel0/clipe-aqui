@@ -44,6 +44,11 @@ export function AuthPage() {
           }}
         />
         <div className="relative">
+          <Link to="/" className="mb-5 inline-flex items-center gap-2">
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-accent font-display text-xs font-bold text-white">
+              CA
+            </span>
+          </Link>
           <p className="font-display text-4xl font-extrabold leading-[0.95] tracking-tight sm:text-5xl">
             Clipe Aqui
           </p>

@@ -1,0 +1,5 @@
+# Vídeo do hero
+
+Coloque aqui um arquivo `hero.mp4` (vertical 9:16 ou landscape cobrindo a tela).
+
+Enquanto o arquivo não existir, a LP usa o reel animado da marca (`HeroReelCanvas`).

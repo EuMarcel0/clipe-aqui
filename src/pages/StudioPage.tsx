@@ -50,6 +50,7 @@ export function StudioPage() {
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
 
   const watermark = useMemo(
     () =>
@@ -238,13 +239,46 @@ export function StudioPage() {
             <p className="mt-1 text-sm text-muted">Importe um vídeo e monte seu clip.</p>
           </div>
 
-          <label className="press surface flex cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed border-white/10 px-6 py-20 text-center transition hover:border-accent/40 hover:bg-lift">
+          <label
+            className={
+              dragOver
+                ? 'press surface flex cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed border-accent bg-accent/10 px-6 py-20 text-center transition'
+                : 'press surface flex cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed border-white/10 px-6 py-20 text-center transition hover:border-accent/40 hover:bg-lift'
+            }
+            onDragEnter={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setDragOver(true)
+            }}
+            onDragOver={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setDragOver(true)
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setDragOver(false)
+            }}
+            onDrop={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setDragOver(false)
+              const dropped = [...e.dataTransfer.files].find((f) =>
+                f.type.startsWith('video/'),
+              )
+              if (dropped) onPickFile(dropped)
+              else setError('Solte um arquivo de vídeo (MP4, MOV ou WebM).')
+            }}
+          >
             <span className="grid h-14 w-14 place-items-center rounded-2xl bg-accent text-white shadow-[0_12px_28px_-12px_rgba(255,45,85,0.7)]">
               <Upload className="h-6 w-6" />
             </span>
             <div>
-              <p className="font-display text-lg font-bold">Escolher vídeo</p>
-              <p className="mt-1 text-sm text-muted">MP4, MOV ou WebM</p>
+              <p className="font-display text-lg font-bold">
+                {dragOver ? 'Solte o vídeo aqui' : 'Escolher vídeo'}
+              </p>
+              <p className="mt-1 text-sm text-muted">Arraste e solte ou toque · MP4, MOV ou WebM</p>
             </div>
             <input
               type="file"

@@ -11,7 +11,7 @@ import {
   updateClip,
   uploadClipToS3,
 } from '../lib/clips'
-import { cutVideoClip, extractAudioFromBlob, probeMediaDuration } from '../lib/ffmpeg'
+import { cutVideoClip, extractAudioRange } from '../lib/ffmpeg'
 import { finalizeClipExport } from '../lib/burnOverlays'
 import { REELS_FRAME } from '../lib/exportPresets'
 import { estimateTranscriptionCostUsd, formatPrecise, segmentsToVtt } from '../lib/format'
@@ -116,21 +116,16 @@ export function StudioPage() {
     if (!file) return
     setBusy(true)
     setError(null)
-    setProgress('Preparando o trecho…')
+    setProgress('Extraindo áudio do trecho…')
     try {
-      const clipBlob = await cutVideoClip(file, start, end)
-      const actualDuration = (await probeMediaDuration(clipBlob)) || clipDuration
+      // Só áudio do intervalo — sem reencodar o vídeo (muito mais rápido no celular)
+      const audio = await extractAudioRange(file, start, end)
+      const actualDuration = clipDuration
 
       setProgress('Gerando legendas…')
-      const audio = await extractAudioFromBlob(clipBlob)
       const result = await transcribeAudio(audio, actualDuration)
 
-      setPreparedClip({
-        blob: clipBlob,
-        start,
-        end,
-        fileKey: fileKeyOf(file),
-      })
+      setPreparedClip(null)
       setCaptions(normalizeCaptionSegments(result.segments, actualDuration))
       setCostUsd(result.estimated_cost_usd)
       setStep('captions')
@@ -146,7 +141,7 @@ export function StudioPage() {
     if (!file) return
     setBusy(true)
     setError(null)
-    setProgress('Preparando seu clip…')
+    setProgress('Cortando o vídeo…')
     try {
       const draft = await createClipDraft({
         title: title || 'Clip sem título',
@@ -169,17 +164,32 @@ export function StudioPage() {
         throw new Error(getErrorMessage(err, 'Não foi possível cortar o vídeo.'))
       }
 
+      setProgress(
+        captions.length || watermark || exportPreset === 'reels'
+          ? 'Gravando legendas no vídeo…'
+          : 'Finalizando…',
+      )
+
       try {
         blob = await finalizeClipExport(blob, {
           preset: exportPreset,
           captions,
           watermark,
+          onProgress: (r) => {
+            if (r < 0.95) {
+              setProgress(`Gravando no vídeo… ${Math.round(r * 100)}%`)
+            } else {
+              setProgress('Enviando…')
+            }
+          },
         })
       } catch (err) {
         throw new Error(
           getErrorMessage(err, 'Não foi possível preparar o vídeo para salvar.'),
         )
       }
+
+      setProgress('Enviando clip…')
 
       const contentType = blob.type?.startsWith('video/') ? blob.type : 'video/mp4'
       const ext = contentType.includes('webm') ? 'webm' : 'mp4'

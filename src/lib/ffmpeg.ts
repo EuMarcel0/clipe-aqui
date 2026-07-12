@@ -369,6 +369,161 @@ export async function extractAudioFromBlob(videoBlob: Blob): Promise<Blob> {
   return blob
 }
 
+/**
+ * Extrai só o áudio do intervalo [start, end] do arquivo original.
+ * Bem mais leve que cortar o vídeo inteiro só para legendar (especialmente no celular).
+ */
+export async function extractAudioRange(
+  file: File | Blob,
+  start: number,
+  end: number,
+): Promise<Blob> {
+  const duration = Math.max(0.2, end - start)
+
+  try {
+    const browser = await extractAudioRangeBrowser(file, start, end)
+    if (browser.size >= 64) return browser
+  } catch (err) {
+    console.warn('Extract audio range browser falhou, tentando ffmpeg:', err)
+  }
+
+  const ff = await getFFmpeg()
+  const id = ++opCounter
+  const inputName =
+    file instanceof File
+      ? `range_in_${id}${extFromName(file.name)}`
+      : `range_in_${id}${blobExt(file)}`
+  const outputName = `range_out_${id}.mp3`
+
+  await ff.writeFile(inputName, await fetchFile(file))
+  try {
+    await ff.exec([
+      '-ss',
+      String(Math.max(0, start)),
+      '-i',
+      inputName,
+      '-t',
+      String(duration),
+      '-vn',
+      '-acodec',
+      'libmp3lame',
+      '-ar',
+      '16000',
+      '-ac',
+      '1',
+      '-b:a',
+      '64k',
+      outputName,
+    ])
+    const data = await ff.readFile(outputName)
+    const blob = toBlob(data, 'audio/mpeg')
+    if (blob.size < 64) throw new Error('Áudio do trecho ficou vazio')
+    return blob
+  } finally {
+    await safeDelete(ff, inputName)
+    await safeDelete(ff, outputName)
+  }
+}
+
+async function extractAudioRangeBrowser(
+  file: File | Blob,
+  start: number,
+  end: number,
+): Promise<Blob> {
+  const url = URL.createObjectURL(file)
+  try {
+    const video = document.createElement('video')
+    video.src = url
+    video.preload = 'auto'
+    video.muted = false
+    video.volume = 0
+    video.playsInline = true
+    await waitMedia(video, 'loadeddata')
+
+    const stream =
+      (
+        video as HTMLVideoElement & {
+          captureStream?: () => MediaStream
+          mozCaptureStream?: () => MediaStream
+        }
+      ).captureStream?.() ||
+      (
+        video as HTMLVideoElement & { mozCaptureStream?: () => MediaStream }
+      ).mozCaptureStream?.()
+
+    let audioStream: MediaStream
+    let audioCtx: AudioContext | null = null
+    if (stream && stream.getAudioTracks().length > 0) {
+      audioStream = new MediaStream(stream.getAudioTracks())
+    } else {
+      audioCtx = new AudioContext()
+      const source = audioCtx.createMediaElementSource(video)
+      const dest = audioCtx.createMediaStreamDestination()
+      source.connect(dest)
+      audioStream = dest.stream
+    }
+
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : ''
+
+    const recorder = new MediaRecorder(audioStream, mime ? { mimeType: mime } : undefined)
+    const chunks: Blob[] = []
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data)
+    }
+
+    const done = new Promise<Blob>((resolve, reject) => {
+      recorder.onerror = () => reject(new Error('Falha ao gravar áudio'))
+      recorder.onstop = () =>
+        resolve(new Blob(chunks, { type: mime || 'audio/webm' }))
+    })
+
+    video.currentTime = Math.max(0, start)
+    await waitMedia(video, 'seeked').catch(() => undefined)
+    recorder.start(200)
+    await video.play()
+
+    await new Promise<void>((resolve, reject) => {
+      let finished = false
+      const finish = () => {
+        if (finished) return
+        finished = true
+        window.clearTimeout(watchdog)
+        video.pause()
+        video.removeEventListener('timeupdate', onTime)
+        video.removeEventListener('ended', onEnded)
+        video.removeEventListener('error', onError)
+        resolve()
+      }
+      const onTime = () => {
+        if (video.currentTime >= end - 0.05) finish()
+      }
+      const onEnded = () => finish()
+      const onError = () => reject(new Error('Erro ao ler áudio do vídeo'))
+      const watchdog = window.setTimeout(
+        () => finish(),
+        Math.ceil((end - start) * 1000) + 8000,
+      )
+      video.addEventListener('timeupdate', onTime)
+      video.addEventListener('ended', onEnded)
+      video.addEventListener('error', onError)
+    })
+
+    if (recorder.state !== 'inactive') recorder.stop()
+    const blob = await done
+    await audioCtx?.close().catch(() => undefined)
+    if (blob.size < 64) throw new Error('Áudio vazio')
+    return blob
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
 async function extractAudioBrowser(videoBlob: Blob): Promise<Blob> {
   const url = URL.createObjectURL(videoBlob)
   try {

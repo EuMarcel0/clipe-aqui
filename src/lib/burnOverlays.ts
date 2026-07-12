@@ -1,7 +1,7 @@
 import type { CaptionSegment, ExportPreset, WatermarkConfig } from '../types'
-import { convertWebmToMp4, probeMediaDuration } from './ffmpeg'
+import { probeMediaDuration } from './ffmpeg'
 import { getActiveCaptionAt, normalizeCaptionSegments } from './captions'
-import { REELS_FRAME, drawCoverFrame } from './exportPresets'
+import { getReelsExportFrame, drawCoverFrame } from './exportPresets'
 
 type FinalizeOptions = {
   preset: ExportPreset
@@ -12,6 +12,7 @@ type FinalizeOptions = {
 
 /**
  * Aplica formato de export (normal/reels) + legendas/marca d'água.
+ * Retorna WebM/MP4 do MediaRecorder — sem ffmpeg.wasm (evita travar no browser).
  */
 export async function finalizeClipExport(
   videoBlob: Blob,
@@ -37,35 +38,23 @@ export async function finalizeClipExport(
   if (!needsPass) return videoBlob
 
   const target =
-    options.preset === 'reels'
-      ? { width: REELS_FRAME.width, height: REELS_FRAME.height }
-      : null
+    options.preset === 'reels' ? getReelsExportFrame() : null
 
   options.onProgress?.(0.02)
-  const webm = await renderWithCanvas(
+  const exported = await renderWithCanvas(
     videoBlob,
     usable,
     mark,
     target,
-    (r) => options.onProgress?.(0.02 + r * 0.75),
+    (r) => options.onProgress?.(0.02 + r * 0.98),
   )
 
-  if (webm.size < 1024) {
+  if (exported.size < 1024) {
     throw new Error('Falha ao preparar o vídeo para exportação')
   }
 
-  options.onProgress?.(0.8)
-  try {
-    const mp4 = await convertWebmToMp4(webm, (r) =>
-      options.onProgress?.(0.8 + r * 0.2),
-    )
-    if (mp4.size >= 1024) return mp4
-  } catch (err) {
-    console.warn('Conversão webm→mp4 falhou, enviando webm:', err)
-  }
-
   options.onProgress?.(1)
-  return webm
+  return exported
 }
 
 /** @deprecated use finalizeClipExport */
@@ -95,8 +84,7 @@ async function renderWithCanvas(
   video.src = objectUrl
   video.playsInline = true
   video.preload = 'auto'
-  video.crossOrigin = 'anonymous'
-  video.muted = false
+  video.muted = true
   video.volume = 0
 
   try {
@@ -107,15 +95,23 @@ async function renderWithCanvas(
 
     const srcW = video.videoWidth
     const srcH = video.videoHeight
-    const width = target?.width ?? srcW
-    const height = target?.height ?? srcH
+    // Limita resolução de encode para não matar o browser
+    let width = target?.width ?? srcW
+    let height = target?.height ?? srcH
+    if (!target) {
+      const maxEdge = 1280
+      const scale = Math.min(1, maxEdge / Math.max(srcW, srcH))
+      width = Math.max(2, Math.round((srcW * scale) / 2) * 2)
+      height = Math.max(2, Math.round((srcH * scale) / 2) * 2)
+    }
+
     const canvas = document.createElement('canvas')
     canvas.width = width
     canvas.height = height
     const ctx = canvas.getContext('2d', { alpha: false })
     if (!ctx) throw new Error('Canvas indisponível')
 
-    const canvasStream = canvas.captureStream(30)
+    const canvasStream = canvas.captureStream(24)
     const videoStream =
       (
         video as HTMLVideoElement & {
@@ -148,9 +144,13 @@ async function renderWithCanvas(
     }
 
     const mimeType = pickRecorderMime()
+    if (!mimeType && typeof MediaRecorder === 'undefined') {
+      throw new Error('Este navegador não consegue exportar vídeo. Use Chrome ou Edge.')
+    }
+
     const recorder = new MediaRecorder(new MediaStream(tracks), {
       mimeType: mimeType || undefined,
-      videoBitsPerSecond: target ? 8_000_000 : 5_000_000,
+      videoBitsPerSecond: target ? 4_500_000 : 3_500_000,
     })
 
     const chunks: Blob[] = []
@@ -168,29 +168,53 @@ async function renderWithCanvas(
     video.currentTime = 0
     await waitFor(video, 'seeked').catch(() => undefined)
 
-    recorder.start(200)
+    recorder.start(250)
+
+    const clipDuration = Number.isFinite(video.duration) ? video.duration : 30
 
     await new Promise<void>((resolve, reject) => {
       let raf = 0
       let rvfc = 0
       let finished = false
       const supportsRvfc = typeof video.requestVideoFrameCallback === 'function'
+      const deadline = window.setTimeout(
+        () => {
+          if (!finished) {
+            finished = true
+            cleanupLoops()
+            reject(
+              new Error(
+                'A exportação demorou demais. Tente um trecho mais curto ou use o formato Normal.',
+              ),
+            )
+          }
+        },
+        Math.ceil(clipDuration * 1000) + 20_000,
+      )
 
-      const finish = () => {
-        if (finished) return
-        finished = true
+      const cleanupLoops = () => {
+        window.clearTimeout(deadline)
         cancelAnimationFrame(raf)
         if (supportsRvfc && typeof video.cancelVideoFrameCallback === 'function') {
           video.cancelVideoFrameCallback(rvfc)
         }
         video.removeEventListener('ended', onEnded)
         video.removeEventListener('error', onError)
+      }
+
+      const finish = () => {
+        if (finished) return
+        finished = true
+        cleanupLoops()
+        video.pause()
         resolve()
       }
 
       const onEnded = () => finish()
       const onError = () => {
-        cancelAnimationFrame(raf)
+        if (finished) return
+        finished = true
+        cleanupLoops()
         reject(new Error('Falha ao reproduzir o clip para exportar'))
       }
 
@@ -198,7 +222,11 @@ async function renderWithCanvas(
       video.addEventListener('error', onError)
 
       const paint = () => {
-        if (finished || video.ended || video.paused) return
+        if (finished) return
+        if (video.paused && !video.ended) {
+          void video.play().catch(() => undefined)
+          return
+        }
         if (target) {
           drawCoverFrame(ctx, video, srcW, srcH, width, height)
         } else {
@@ -206,19 +234,19 @@ async function renderWithCanvas(
         }
         drawWatermark(ctx, watermark, width, height)
         drawCaption(ctx, captions, video.currentTime, watermark, width, height)
-        if (video.duration > 0) onProgress?.(Math.min(1, video.currentTime / video.duration))
+        if (clipDuration > 0) onProgress?.(Math.min(1, video.currentTime / clipDuration))
       }
 
       const loopRaf = () => {
-        if (finished || video.ended) return
+        if (finished) return
         paint()
-        raf = requestAnimationFrame(loopRaf)
+        if (!finished) raf = requestAnimationFrame(loopRaf)
       }
 
       const loopRvfc = () => {
-        if (finished || video.ended) return
+        if (finished) return
         paint()
-        rvfc = video.requestVideoFrameCallback(() => loopRvfc())
+        if (!finished) rvfc = video.requestVideoFrameCallback(() => loopRvfc())
       }
 
       void video
@@ -227,7 +255,13 @@ async function renderWithCanvas(
           if (supportsRvfc) loopRvfc()
           else loopRaf()
         })
-        .catch(reject)
+        .catch((err) => {
+          if (!finished) {
+            finished = true
+            cleanupLoops()
+            reject(err instanceof Error ? err : new Error('Não foi possível iniciar a prévia'))
+          }
+        })
     })
 
     await sleep(200)
@@ -330,6 +364,7 @@ function pickRecorderMime() {
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp8,opus',
     'video/webm',
+    'video/mp4',
   ]
   for (const type of candidates) {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) {

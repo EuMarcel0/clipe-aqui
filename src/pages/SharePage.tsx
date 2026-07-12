@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { getClipByShareToken } from '../lib/clips'
+import { getClipByShareToken, resolveClipMediaUrl } from '../lib/clips'
+import { ClipPlayer } from '../components/ClipPlayer'
 import type { ClipRow } from '../types'
 
 export function SharePage() {
@@ -26,48 +27,44 @@ export function SharePage() {
   }, [token])
 
   if (loading) {
-    return <p className="py-20 text-center text-sm text-ink/55">Abrindo clip…</p>
-  }
-
-  if (error || !clip) {
     return (
-      <div className="glass mt-10 rounded-3xl p-6 text-center">
-        <p className="font-display text-2xl font-bold">Link indisponível</p>
-        <p className="mt-2 text-sm text-ink/55">{error ?? 'Clip não encontrado.'}</p>
+      <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-3">
+        <span className="h-8 w-8 animate-spin rounded-full border-2 border-ink/10 border-t-accent" />
+        <p className="text-sm text-muted">Abrindo clip…</p>
       </div>
     )
   }
 
-  return (
-    <div className="space-y-5">
-      <section className="rounded-[1.8rem] bg-ink px-5 py-6 text-paper">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent">Clipe Aqui</p>
-        <h1 className="mt-2 font-display text-3xl font-extrabold tracking-tight">{clip.title}</h1>
-      </section>
+  if (error || !clip) {
+    return (
+      <div className="surface mt-10 rounded-3xl p-8 text-center">
+        <p className="font-display text-2xl font-bold">Link indisponível</p>
+        <p className="mt-2 text-sm text-muted">{error ?? 'Clip não encontrado.'}</p>
+      </div>
+    )
+  }
 
-      {clip.s3_url ? (
-        <div className="overflow-hidden rounded-[1.6rem] bg-ink shadow-[0_24px_50px_-28px_rgba(18,20,26,0.7)]">
-          <video
-            src={clip.s3_url}
-            controls
-            playsInline
-            className="aspect-[9/16] max-h-[70dvh] w-full object-contain sm:aspect-video"
-          >
-            {clip.captions_vtt ? (
-              <track kind="captions" srcLang="pt" label="Português" default src={vttToBlobUrl(clip.captions_vtt)} />
-            ) : null}
-          </video>
-        </div>
+  const mediaUrl = resolveClipMediaUrl(clip)
+
+  return (
+    <div className="slide-up space-y-4">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Clipe Aqui</p>
+        <h1 className="mt-1 font-display text-2xl font-bold tracking-tight">{clip.title}</h1>
+      </div>
+
+      {mediaUrl ? (
+        <ClipPlayer src={mediaUrl} captions={clip.captions} />
       ) : (
-        <p className="text-sm text-ink/55">Vídeo ainda não disponível.</p>
+        <p className="text-sm text-muted">Vídeo ainda não disponível.</p>
       )}
 
       {Array.isArray(clip.captions) && clip.captions.length > 0 ? (
-        <div className="glass rounded-3xl p-4">
-          <p className="font-display text-lg font-bold">Legendas</p>
+        <div className="surface rounded-3xl p-4">
+          <p className="font-display text-base font-bold">Legendas</p>
           <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
             {clip.captions.map((c, i) => (
-              <p key={`${c.start}-${i}`} className="text-sm text-ink/80">
+              <p key={`${c.start}-${i}`} className="text-sm leading-relaxed text-ink/75">
                 {c.text}
               </p>
             ))}
@@ -76,9 +73,4 @@ export function SharePage() {
       ) : null}
     </div>
   )
-}
-
-function vttToBlobUrl(vtt: string) {
-  const blob = new Blob([vtt], { type: 'text/vtt' })
-  return URL.createObjectURL(blob)
 }

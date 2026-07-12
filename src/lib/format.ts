@@ -33,3 +33,30 @@ export async function copyText(text: string) {
   document.execCommand('copy')
   document.body.removeChild(el)
 }
+
+export function segmentsToVtt(
+  segments: Array<{ start: number; end: number; text: string }>,
+): string {
+  const lines = ['WEBVTT', '']
+  segments.forEach((s, i) => {
+    const text = s.text.trim()
+    if (!text) return
+    lines.push(String(i + 1))
+    lines.push(`${formatVttTs(s.start)} --> ${formatVttTs(s.end)}`)
+    lines.push(text)
+    lines.push('')
+  })
+  return lines.join('\n')
+}
+
+function formatVttTs(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  const ms = Math.round((seconds % 1) * 1000)
+  return `${pad2(h)}:${pad2(m)}:${pad2(s)}.${String(ms).padStart(3, '0')}`
+}
+
+function pad2(n: number) {
+  return String(n).padStart(2, '0')
+}

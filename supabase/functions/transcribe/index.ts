@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
     }
 
     const data = await res.json();
-    const segments = (data.segments ?? []).map(
+    const rawSegments = (data.segments ?? []).map(
       (s: { start: number; end: number; text: string }) => ({
         start: s.start,
         end: s.end,
@@ -56,13 +56,15 @@ Deno.serve(async (req) => {
       }),
     ).filter((s: { text: string }) => s.text.length > 0);
 
-    if (segments.length === 0 && data.text) {
-      segments.push({
+    if (rawSegments.length === 0 && data.text) {
+      rawSegments.push({
         start: 0,
         end: Math.max(durationSeconds, 1),
         text: String(data.text).trim(),
       });
     }
+
+    const segments = normalizeSegments(rawSegments, durationSeconds);
 
     const minutes = Math.max(durationSeconds, 1) / 60;
     const estimatedCostUsd = Number((minutes * COST_PER_MINUTE_USD).toFixed(6));
@@ -84,6 +86,47 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+function normalizeSegments(
+  segments: Array<{ start: number; end: number; text: string }>,
+  clipDuration: number,
+) {
+  const cleaned = [...segments].sort((a, b) => a.start - b.start);
+  if (cleaned.length === 0) return cleaned;
+
+  const MIN_DURATION = 0.4;
+  const HOLD_PAD = 0.45;
+  const FILL_GAP = 1.35;
+  const out: Array<{ start: number; end: number; text: string }> = [];
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const cur = cleaned[i];
+    const next = cleaned[i + 1];
+    const start = Math.max(0, cur.start);
+    let end = Math.max(cur.end, start + MIN_DURATION) + HOLD_PAD;
+
+    if (next) {
+      if (end >= next.start) {
+        end = Math.max(start + MIN_DURATION, next.start - 0.04);
+      } else if (next.start - end <= FILL_GAP) {
+        end = next.start;
+      }
+    } else if (clipDuration > 0) {
+      const remain = clipDuration - end;
+      if (remain > 0) {
+        const extra = cleaned.length === 1
+          ? Math.min(remain - 0.05, Math.max(1.2, clipDuration * 0.35))
+          : Math.min(remain - 0.05, 1.6);
+        if (extra > 0) end += extra;
+      }
+      end = Math.min(end, Math.max(start + MIN_DURATION, clipDuration - 0.05));
+    }
+
+    out.push({ start, end: Math.max(end, start + MIN_DURATION), text: cur.text });
+  }
+
+  return out;
+}
 
 function toVtt(
   segments: Array<{ start: number; end: number; text: string }>,

@@ -1,5 +1,5 @@
 import { Link, NavLink } from 'react-router-dom'
-import { Clapperboard, FolderOpen, LogOut, Scissors } from 'lucide-react'
+import { FolderOpen, LogOut, Plus } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuth } from '../hooks/useAuth'
 
@@ -7,25 +7,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, signOut } = useAuth()
 
   return (
-    <div className="grain relative mx-auto flex min-h-dvh max-w-lg flex-col px-4 pb-24 pt-5 sm:max-w-2xl">
-      <header className="mb-6 flex items-center justify-between gap-3">
+    <div className="relative mx-auto flex min-h-dvh max-w-lg flex-col px-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-4 sm:max-w-xl">
+      <header className="mb-5 flex items-center justify-between gap-3">
         <Link to="/" className="group flex items-center gap-2.5">
-          <span className="grid h-10 w-10 place-items-center rounded-2xl bg-ink text-accent shadow-[0_10px_30px_-12px_rgba(15,159,138,0.8)] transition group-hover:scale-[1.03]">
-            <Clapperboard className="h-5 w-5" />
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-accent text-white transition group-hover:scale-[1.03]">
+            <span className="font-display text-sm font-bold tracking-tight">CA</span>
           </span>
-          <div>
-            <p className="font-display text-xl font-extrabold leading-none tracking-tight">
-              Clipe Aqui
-            </p>
-            <p className="mt-1 text-xs text-ink/55">corte · legende · compartilhe</p>
-          </div>
+          <p className="font-display text-lg font-bold tracking-tight text-ink">Clipe Aqui</p>
         </Link>
 
         {user ? (
           <button
             type="button"
             onClick={() => void signOut()}
-            className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-white/70 px-3 py-2 text-xs font-medium text-ink/70"
+            className="press inline-flex h-9 items-center gap-1.5 rounded-full border border-white/10 bg-lift px-3 text-xs font-semibold text-muted"
           >
             <LogOut className="h-3.5 w-3.5" />
             Sair
@@ -33,13 +28,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ) : null}
       </header>
 
-      <main className="flex-1">{children}</main>
+      <main className="fade-in flex-1">{children}</main>
 
       {user ? (
-        <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-ink/8 bg-[#f7f4ee]/95 backdrop-blur-md">
-          <div className="mx-auto flex max-w-lg justify-around px-2 py-2 sm:max-w-2xl">
-            <Tab to="/" icon={<Scissors className="h-5 w-5" />} label="Studio" />
-            <Tab to="/biblioteca" icon={<FolderOpen className="h-5 w-5" />} label="Biblioteca" />
+        <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/6 bg-paper/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl">
+          <div className="mx-auto flex max-w-lg items-stretch justify-around px-6 py-2 sm:max-w-xl">
+            <Tab to="/" icon={<Plus className="h-5 w-5" strokeWidth={2.25} />} label="Criar" />
+            <Tab
+              to="/biblioteca"
+              icon={<FolderOpen className="h-5 w-5" strokeWidth={2.25} />}
+              label="Projetos"
+            />
           </div>
         </nav>
       ) : null}
@@ -61,13 +60,24 @@ function Tab({
       to={to}
       className={({ isActive }) =>
         clsx(
-          'flex min-w-24 flex-col items-center gap-1 rounded-2xl px-4 py-2 text-xs font-semibold transition',
-          isActive ? 'bg-ink text-paper' : 'text-ink/55 hover:bg-white/60',
+          'flex min-w-[5.5rem] flex-col items-center gap-1 rounded-2xl px-4 py-2 text-[11px] font-semibold tracking-wide transition',
+          isActive ? 'text-accent' : 'text-muted hover:text-ink',
         )
       }
     >
-      {icon}
-      {label}
+      {({ isActive }) => (
+        <>
+          <span
+            className={clsx(
+              'grid h-9 w-9 place-items-center rounded-2xl transition',
+              isActive ? 'bg-accent/15 text-accent' : 'text-muted',
+            )}
+          >
+            {icon}
+          </span>
+          {label}
+        </>
+      )}
     </NavLink>
   )
 }

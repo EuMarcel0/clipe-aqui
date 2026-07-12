@@ -46,10 +46,6 @@ Deno.serve(async (req) => {
     }
 
     const bucket = Deno.env.get("AWS_S3_BUCKET") ?? "clips";
-    const publicBase =
-      Deno.env.get("AWS_S3_PUBLIC_BASE_URL") ??
-      `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/public/${bucket}`;
-
     const safeName = String(filename).replace(/[^a-zA-Z0-9._-]/g, "_");
     const key = `${user.id}/${clipId}/${Date.now()}-${safeName}`;
 
@@ -68,12 +64,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    const publicUrl = `${publicBase.replace(/\/$/, "")}/${key}`;
+    // Sempre usar a URL pública oficial do Storage (evita secret apontando para /s3)
+    const { data: publicData } = admin.storage.from(bucket).getPublicUrl(key);
+    const override = Deno.env.get("AWS_S3_PUBLIC_BASE_URL")?.trim();
+    const publicUrl =
+      override && override.includes("/object/public/")
+        ? `${override.replace(/\/$/, "")}/${key}`
+        : publicData.publicUrl;
 
     return json({
       uploadUrl: data.signedUrl,
       token: data.token,
       key,
+      bucket,
       publicUrl,
       contentType,
       expiresIn: 900,

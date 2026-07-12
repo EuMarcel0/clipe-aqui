@@ -4,6 +4,16 @@ export type CaptionSegment = {
   text: string
 }
 
+export type WatermarkPosition = 'top' | 'bottom'
+
+export type WatermarkConfig = {
+  text: string
+  position: WatermarkPosition
+}
+
+/** Formato de exportação do clip */
+export type ExportPreset = 'normal' | 'reels'
+
 export type ClipRow = {
   id: string
   user_id: string

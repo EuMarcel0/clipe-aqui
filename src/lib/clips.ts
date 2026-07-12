@@ -1,6 +1,21 @@
 import { supabase } from './supabase'
 import type { CaptionSegment, ClipRow } from '../types'
 
+const CLIPS_BUCKET = 'clips'
+
+/** Monta URL pública estável do Storage a partir da key salva. */
+export function resolveClipMediaUrl(clip: Pick<ClipRow, 's3_url' | 's3_key'>) {
+  if (clip.s3_key) {
+    const base = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '')
+    if (base) {
+      return `${base}/storage/v1/object/public/${CLIPS_BUCKET}/${clip.s3_key}`
+    }
+    const { data } = supabase.storage.from(CLIPS_BUCKET).getPublicUrl(clip.s3_key)
+    if (data.publicUrl) return data.publicUrl
+  }
+  return clip.s3_url
+}
+
 export async function listMyClips() {
   const { data, error } = await supabase
     .from('clips')
@@ -119,27 +134,84 @@ export async function transcribeAudio(audio: Blob, durationSeconds: number) {
   }
 }
 
-export async function getUploadUrl(clipId: string, filename: string) {
+export async function getUploadUrl(
+  clipId: string,
+  filename: string,
+  contentType = 'video/mp4',
+) {
   const { data, error } = await supabase.functions.invoke('get-upload-url', {
-    body: { clipId, filename, contentType: 'video/mp4' },
+    body: { clipId, filename, contentType },
   })
 
-  if (error) throw error
+  if (error) {
+    throw new Error(
+      (error as { message?: string }).message ||
+        'Falha ao criar URL de upload',
+    )
+  }
+  if (!data) {
+    throw new Error('Resposta vazia ao criar URL de upload')
+  }
+  if (data.error) {
+    throw new Error(
+      [data.error, data.detail].filter(Boolean).map(String).join(' — '),
+    )
+  }
+  if (!data.uploadUrl || !data.key) {
+    throw new Error('URL de upload incompleta')
+  }
+
   return data as {
     uploadUrl: string
+    token: string
     key: string
+    bucket: string
     publicUrl: string
     contentType: string
   }
 }
 
-export async function uploadClipToS3(blob: Blob, uploadUrl: string, contentType: string) {
-  const res = await fetch(uploadUrl, {
+export async function uploadClipToS3(
+  blob: Blob,
+  upload: {
+    uploadUrl: string
+    token?: string
+    key: string
+    bucket?: string
+    contentType: string
+  },
+) {
+  if (blob.size < 1024) {
+    throw new Error('Arquivo do clip inválido para upload')
+  }
+
+  // Caminho preferencial: API do Storage com token assinado
+  if (upload.token && upload.bucket) {
+    const { error } = await supabase.storage
+      .from(upload.bucket)
+      .uploadToSignedUrl(upload.key, upload.token, blob, {
+        contentType: upload.contentType,
+      })
+    if (error) {
+      throw new Error(error.message || 'Falha no upload do Storage')
+    }
+    return
+  }
+
+  const res = await fetch(upload.uploadUrl, {
     method: 'PUT',
-    headers: { 'Content-Type': contentType },
+    headers: {
+      'Content-Type': upload.contentType,
+      'x-upsert': 'true',
+    },
     body: blob,
   })
   if (!res.ok) {
-    throw new Error(`Falha no upload S3 (${res.status})`)
+    const body = await res.text().catch(() => '')
+    throw new Error(
+      body
+        ? `Falha no upload (${res.status}): ${body.slice(0, 160)}`
+        : `Falha no upload (${res.status})`,
+    )
   }
 }

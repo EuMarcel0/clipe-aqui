@@ -60,25 +60,27 @@ export function SharePanel({ clip, onUpdated }: Props) {
   }
 
   return (
-    <div className="glass space-y-3 rounded-3xl p-4">
+    <div className="surface space-y-3 rounded-3xl p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="font-display text-lg font-bold">Compartilhar</p>
-          <p className="mt-1 text-sm text-ink/60">
-            Link público do clip {clip.is_public ? 'ativo' : 'desativado'}.
+          <p className="font-display text-base font-bold tracking-tight">Compartilhar</p>
+          <p className="mt-0.5 text-sm text-muted">
+            Link {clip.is_public ? 'ativo' : 'privado'}
           </p>
         </div>
-        <Share2 className="mt-1 h-5 w-5 text-accent" />
+        <span className="grid h-9 w-9 place-items-center rounded-xl bg-accent/10 text-accent">
+          <Share2 className="h-4 w-4" />
+        </span>
       </div>
 
-      <div className="rounded-2xl bg-ink/5 px-3 py-2.5 text-xs break-all text-ink/70">
+      <div className="rounded-xl bg-mist px-3 py-2.5 font-mono text-[11px] break-all text-muted">
         {shareUrl}
       </div>
 
       <div className="grid grid-cols-2 gap-2">
         <Button type="button" variant="ghost" loading={busy} onClick={() => void copyLink()}>
           {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-          {copied ? 'Copiado' : 'Copiar link'}
+          {copied ? 'Copiado' : 'Copiar'}
         </Button>
         <Button type="button" loading={busy} onClick={() => void nativeShare()}>
           <Share2 className="h-4 w-4" />
@@ -89,10 +91,10 @@ export function SharePanel({ clip, onUpdated }: Props) {
       {clip.is_public ? (
         <button
           type="button"
-          className="w-full text-center text-xs font-medium text-ink/45 underline-offset-2 hover:underline"
+          className="w-full text-center text-xs font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
           onClick={() => void disableShare()}
         >
-          Desativar link público
+          Desativar link
         </button>
       ) : null}
     </div>

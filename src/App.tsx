@@ -9,7 +9,7 @@ import { SharePage } from './pages/SharePage'
 function Protected({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
   if (loading) {
-    return <p className="py-20 text-center text-sm text-ink/55">Carregando…</p>
+    return <LoadingScreen />
   }
   if (!user) return <Navigate to="/auth" replace />
   return children
@@ -18,10 +18,19 @@ function Protected({ children }: { children: React.ReactNode }) {
 function PublicOnly({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
   if (loading) {
-    return <p className="py-20 text-center text-sm text-ink/55">Carregando…</p>
+    return <LoadingScreen />
   }
   if (user) return <Navigate to="/" replace />
   return children
+}
+
+function LoadingScreen() {
+  return (
+    <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-3">
+      <span className="h-8 w-8 animate-spin rounded-full border-2 border-ink/10 border-t-accent" />
+      <p className="text-sm font-medium text-muted">Carregando…</p>
+    </div>
+  )
 }
 
 export default function App() {

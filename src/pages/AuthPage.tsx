@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, Sparkles } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from '../components/Button'
 import { isSupabaseConfigured } from '../lib/supabase'
@@ -24,7 +24,7 @@ export function AuthPage() {
         await signIn(email, password)
       } else {
         await signUp(email, password)
-        setInfo('Conta criada. Se o projeto exigir confirmação de e-mail, verifique sua caixa de entrada.')
+        setInfo('Conta criada. Se precisar confirmar o e-mail, verifique sua caixa de entrada.')
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha na autenticação')
@@ -34,32 +34,33 @@ export function AuthPage() {
   }
 
   return (
-    <div className="flex min-h-[80dvh] flex-col justify-center">
-      <section className="relative overflow-hidden rounded-[2rem] bg-ink px-5 py-8 text-paper shadow-[0_30px_80px_-40px_rgba(18,20,26,0.9)]">
-        <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-accent/30 blur-2xl" />
-        <div className="absolute -bottom-16 left-8 h-44 w-44 rounded-full bg-warn/25 blur-3xl" />
-
-        <p className="font-display text-4xl font-extrabold leading-[0.95] tracking-tight sm:text-5xl">
-          Clipe Aqui
-        </p>
-        <p className="mt-4 max-w-[18rem] text-sm leading-relaxed text-paper/70">
-          Corte o momento, legende com IA e salve no S3 — feito para o celular.
-        </p>
-
-        <div className="mt-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs text-accent">
-          <Sparkles className="h-3.5 w-3.5" />
-          OpenAI gpt-4o-mini / whisper · ~US$ 0,006/min
+    <div className="flex min-h-[78dvh] flex-col justify-center">
+      <section className="slide-up relative overflow-hidden rounded-3xl bg-canvas px-6 py-10 text-white">
+        <div
+          className="pointer-events-none absolute inset-0 opacity-90"
+          style={{
+            background:
+              'radial-gradient(ellipse 80% 60% at 80% 0%, rgba(255,45,85,0.35), transparent 55%), radial-gradient(ellipse 70% 50% at 10% 100%, rgba(255,45,85,0.12), transparent 50%)',
+          }}
+        />
+        <div className="relative">
+          <p className="font-display text-4xl font-extrabold leading-[0.95] tracking-tight sm:text-5xl">
+            Clipe Aqui
+          </p>
+          <p className="mt-4 max-w-[17rem] text-[15px] leading-relaxed text-white/65">
+            Corte, legende e exporte para Reels em poucos toques.
+          </p>
         </div>
       </section>
 
       {!isSupabaseConfigured() ? (
-        <p className="mt-4 rounded-2xl bg-warn/15 px-4 py-3 text-sm text-ink/80">
+        <p className="mt-4 rounded-2xl border border-warn/30 bg-warn/10 px-4 py-3 text-sm text-ink/80">
           Configure <code>VITE_SUPABASE_*</code> no arquivo <code>.env</code>.
         </p>
       ) : null}
 
-      <form onSubmit={(e) => void submit(e)} className="glass mt-5 space-y-3 rounded-[1.75rem] p-5">
-        <div className="flex gap-2 rounded-2xl bg-ink/5 p-1">
+      <form onSubmit={(e) => void submit(e)} className="surface slide-up mt-5 space-y-4 rounded-3xl p-5">
+        <div className="flex gap-1 rounded-2xl bg-mist p-1">
           <ModeButton active={mode === 'login'} onClick={() => setMode('login')}>
             Entrar
           </ModeButton>
@@ -68,19 +69,19 @@ export function AuthPage() {
           </ModeButton>
         </div>
 
-        <label className="block text-sm font-medium">
+        <label className="block text-sm font-medium text-ink/80">
           E-mail
           <input
             required
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mt-1.5 w-full rounded-2xl border border-ink/10 bg-white px-3 py-3 outline-none ring-accent focus:ring-2"
+            className="field mt-1.5"
             placeholder="voce@email.com"
           />
         </label>
 
-        <label className="block text-sm font-medium">
+        <label className="block text-sm font-medium text-ink/80">
           Senha
           <input
             required
@@ -88,7 +89,7 @@ export function AuthPage() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1.5 w-full rounded-2xl border border-ink/10 bg-white px-3 py-3 outline-none ring-accent focus:ring-2"
+            className="field mt-1.5"
             placeholder="mín. 6 caracteres"
           />
         </label>
@@ -97,17 +98,16 @@ export function AuthPage() {
         {info ? <p className="text-sm text-accent-deep">{info}</p> : null}
 
         <Button type="submit" className="w-full" loading={loading}>
-          {mode === 'login' ? 'Entrar no studio' : 'Criar e começar'}
+          {mode === 'login' ? 'Entrar' : 'Criar conta'}
           <ArrowRight className="h-4 w-4" />
         </Button>
-
-        <p className="text-center text-xs text-ink/45">
-          Ao continuar, você poderá clipar, legendar e compartilhar.
-        </p>
       </form>
 
-      <p className="mt-6 text-center text-xs text-ink/40">
-        Já tem um link? Abra <Link className="underline" to="/s/demo">/s/seu-token</Link>
+      <p className="mt-6 text-center text-xs text-muted">
+        Já tem um link? Abra{' '}
+        <Link className="font-semibold text-white underline-offset-2 hover:underline" to="/s/demo">
+          /s/seu-token
+        </Link>
       </p>
     </div>
   )
@@ -128,8 +128,8 @@ function ModeButton({
       onClick={onClick}
       className={
         active
-          ? 'flex-1 rounded-xl bg-ink py-2.5 text-sm font-semibold text-paper'
-          : 'flex-1 rounded-xl py-2.5 text-sm font-semibold text-ink/55'
+          ? 'flex-1 rounded-xl bg-lift py-2.5 text-sm font-semibold text-ink shadow-sm ring-1 ring-white/10'
+          : 'flex-1 rounded-xl py-2.5 text-sm font-semibold text-muted'
       }
     >
       {children}

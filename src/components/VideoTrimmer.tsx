@@ -1,17 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pause, Play } from 'lucide-react'
 import type { CaptionSegment } from '../types'
 import { clamp, formatPrecise } from '../lib/format'
+import { getActiveCaptionAt } from '../lib/captions'
 import { Button } from './Button'
+import { ClipTimeline } from './ClipTimeline'
+import type { WatermarkConfig } from '../types'
 
 type Props = {
   src: string
   start: number
   end: number
-  /** Duração já conhecida (ex.: do upload) — evita slider com max=1 */
   duration?: number
   onChangeRange: (start: number, end: number) => void
   captions?: CaptionSegment[]
+  watermark?: WatermarkConfig | null
 }
 
 export function VideoTrimmer({
@@ -21,6 +24,7 @@ export function VideoTrimmer({
   duration: durationProp = 0,
   onChangeRange,
   captions = [],
+  watermark = null,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const rangeRef = useRef({ start, end })
@@ -30,7 +34,7 @@ export function VideoTrimmer({
 
   rangeRef.current = { start, end }
 
-  const activeCaption = captions.find((c) => current >= c.start && current <= c.end)
+  const activeCaption = getActiveCaptionAt(captions, current - start)
   const max = duration > 0 ? duration : Math.max(end, start + 1, 1)
 
   useEffect(() => {
@@ -66,7 +70,6 @@ export function VideoTrimmer({
     video.addEventListener('pause', onPause)
     video.addEventListener('play', onPlay)
 
-    // Metadata pode já estar pronta (blob URL reutilizado)
     if (video.readyState >= 1) syncDuration()
 
     return () => {
@@ -77,6 +80,13 @@ export function VideoTrimmer({
       video.removeEventListener('play', onPlay)
     }
   }, [src])
+
+  const seekTo = useCallback((time: number) => {
+    const video = videoRef.current
+    if (!video) return
+    video.currentTime = clamp(time, 0, video.duration || time)
+    setCurrent(video.currentTime)
+  }, [])
 
   const togglePlay = async () => {
     const video = videoRef.current
@@ -91,74 +101,59 @@ export function VideoTrimmer({
     }
   }
 
-  const setStart = (value: number) => {
-    const next = clamp(value, 0, Math.max(0, end - 0.2))
-    onChangeRange(next, end)
-    if (videoRef.current) videoRef.current.currentTime = next
-  }
-
-  const setEnd = (value: number) => {
-    const upper = duration > 0 ? duration : max
-    const next = clamp(value, start + 0.2, upper)
-    onChangeRange(start, next)
-    if (videoRef.current) {
-      videoRef.current.currentTime = Math.max(start, next - 0.05)
-    }
-  }
-
   return (
-    <div className="space-y-4">
-      <div className="relative overflow-hidden rounded-[1.6rem] bg-ink shadow-[0_24px_50px_-28px_rgba(18,20,26,0.7)]">
+    <div className="space-y-3">
+      <div className="relative overflow-hidden rounded-3xl bg-canvas">
         <video
           ref={videoRef}
           src={src}
           playsInline
           preload="metadata"
-          className="aspect-[9/16] max-h-[58dvh] w-full object-contain sm:aspect-video sm:max-h-[420px]"
+          className="aspect-[9/16] max-h-[48dvh] w-full object-contain sm:aspect-video sm:max-h-[420px]"
         />
+        {watermark?.text.trim() ? (
+          <div
+            className={`pointer-events-none absolute inset-x-3 text-center text-sm font-semibold tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] sm:text-base ${
+              watermark.position === 'top' ? 'top-4' : 'bottom-4'
+            }`}
+            style={{ opacity: 0.8 }}
+          >
+            {watermark.text.trim()}
+          </div>
+        ) : null}
         {activeCaption ? (
-          <div className="pointer-events-none absolute inset-x-3 bottom-4 rounded-xl bg-black/65 px-3 py-2 text-center text-sm font-semibold leading-snug text-white">
+          <div
+            className={`pointer-events-none absolute inset-x-3 rounded-xl bg-black/65 px-3 py-2 text-center text-sm font-semibold leading-snug text-white ${
+              watermark?.text.trim() && watermark.position === 'bottom'
+                ? 'bottom-12'
+                : 'bottom-4'
+            }`}
+          >
             {activeCaption.text}
           </div>
         ) : null}
       </div>
 
-      <div className="glass rounded-3xl p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
+      <div className="surface space-y-3 rounded-3xl p-3 sm:p-4">
+        <div className="flex items-center justify-between gap-3 px-1">
           <Button type="button" variant="secondary" className="!py-2.5" onClick={() => void togglePlay()}>
             {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
             {playing ? 'Pausar' : 'Prévia'}
           </Button>
-          <p className="text-sm font-medium text-ink/70">
-            {formatPrecise(current)} · clip {formatPrecise(Math.max(0, end - start))}
+          <p className="text-sm font-medium tabular-nums text-muted">
+            {formatPrecise(current)} / {formatPrecise(max)}
           </p>
         </div>
 
-        <label className="mb-3 block text-xs font-semibold uppercase tracking-[0.14em] text-ink/45">
-          Início — {formatPrecise(start)}
-          <input
-            type="range"
-            min={0}
-            max={max}
-            step={0.1}
-            value={clamp(start, 0, max)}
-            onChange={(e) => setStart(Number(e.target.value))}
-            className="mt-2 w-full accent-[var(--color-accent)]"
-          />
-        </label>
-
-        <label className="block text-xs font-semibold uppercase tracking-[0.14em] text-ink/45">
-          Fim — {formatPrecise(end)}
-          <input
-            type="range"
-            min={0}
-            max={max}
-            step={0.1}
-            value={clamp(end, 0, max)}
-            onChange={(e) => setEnd(Number(e.target.value))}
-            className="mt-2 w-full accent-[var(--color-accent)]"
-          />
-        </label>
+        <ClipTimeline
+          src={src}
+          start={start}
+          end={end}
+          duration={max}
+          current={current}
+          onChangeRange={onChangeRange}
+          onSeek={seekTo}
+        />
       </div>
     </div>
   )

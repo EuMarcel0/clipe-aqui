@@ -19,7 +19,7 @@ export function getReelsExportFrame() {
     ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8) <= 4
 
   if (mobile || lowMem) {
-    return { width: 720, height: 1280 } as const
+    return { width: 540, height: 960 } as const
   }
   return REELS_FRAME
 }

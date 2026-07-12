@@ -37,8 +37,7 @@ export async function finalizeClipExport(
 
   if (!needsPass) return videoBlob
 
-  const target =
-    options.preset === 'reels' ? getReelsExportFrame() : null
+  const target = options.preset === 'reels' ? getReelsExportFrame() : null
 
   options.onProgress?.(0.02)
   const exported = await renderWithCanvas(
@@ -79,27 +78,35 @@ async function renderWithCanvas(
   target: { width: number; height: number } | null,
   onProgress?: (ratio: number) => void,
 ): Promise<Blob> {
+  if (typeof MediaRecorder === 'undefined') {
+    throw new Error('Este navegador não consegue exportar vídeo. Use Chrome ou Edge.')
+  }
+
   const objectUrl = URL.createObjectURL(videoBlob)
   const video = document.createElement('video')
-  video.src = objectUrl
+  video.setAttribute('playsinline', 'true')
+  video.setAttribute('webkit-playsinline', 'true')
   video.playsInline = true
   video.preload = 'auto'
   video.muted = true
+  video.defaultMuted = true
   video.volume = 0
+  video.src = objectUrl
 
   try {
-    await waitFor(video, 'loadeddata')
+    await waitFor(video, 'loadeddata', 15_000)
     if (!video.videoWidth || !video.videoHeight) {
-      throw new Error('Vídeo sem dimensões para exportar')
+      throw new Error(
+        'Não foi possível abrir o vídeo cortado neste celular. Tente no computador ou use Chrome.',
+      )
     }
 
     const srcW = video.videoWidth
     const srcH = video.videoHeight
-    // Limita resolução de encode para não matar o browser
     let width = target?.width ?? srcW
     let height = target?.height ?? srcH
     if (!target) {
-      const maxEdge = 1280
+      const maxEdge = isMobile() ? 960 : 1280
       const scale = Math.min(1, maxEdge / Math.max(srcW, srcH))
       width = Math.max(2, Math.round((srcW * scale) / 2) * 2)
       height = Math.max(2, Math.round((srcH * scale) / 2) * 2)
@@ -111,7 +118,15 @@ async function renderWithCanvas(
     const ctx = canvas.getContext('2d', { alpha: false })
     if (!ctx) throw new Error('Canvas indisponível')
 
-    const canvasStream = canvas.captureStream(24)
+    // Primeiro frame: alguns celulares só “acordam” o captureStream depois de desenhar
+    paintFrame(ctx, video, srcW, srcH, width, height, target, watermark, captions)
+
+    const captureStream =
+      typeof canvas.captureStream === 'function' ? canvas.captureStream(24) : null
+    if (!captureStream) {
+      throw new Error('Este navegador não suporta exportar vídeo com legendas.')
+    }
+
     const videoStream =
       (
         video as HTMLVideoElement & {
@@ -125,7 +140,7 @@ async function renderWithCanvas(
         }
       ).mozCaptureStream?.()
 
-    const tracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()]
+    const tracks: MediaStreamTrack[] = [...captureStream.getVideoTracks()]
     if (videoStream) {
       for (const track of videoStream.getAudioTracks()) tracks.push(track)
     }
@@ -134,6 +149,7 @@ async function renderWithCanvas(
     if (tracks.length === 1) {
       try {
         audioCtx = new AudioContext()
+        if (audioCtx.state === 'suspended') await audioCtx.resume().catch(() => undefined)
         const source = audioCtx.createMediaElementSource(video)
         const dest = audioCtx.createMediaStreamDestination()
         source.connect(dest)
@@ -144,14 +160,15 @@ async function renderWithCanvas(
     }
 
     const mimeType = pickRecorderMime()
-    if (!mimeType && typeof MediaRecorder === 'undefined') {
-      throw new Error('Este navegador não consegue exportar vídeo. Use Chrome ou Edge.')
+    let recorder: MediaRecorder
+    try {
+      recorder = new MediaRecorder(new MediaStream(tracks), {
+        mimeType: mimeType || undefined,
+        videoBitsPerSecond: isMobile() ? 2_500_000 : target ? 4_500_000 : 3_500_000,
+      })
+    } catch {
+      recorder = new MediaRecorder(new MediaStream(tracks))
     }
-
-    const recorder = new MediaRecorder(new MediaStream(tracks), {
-      mimeType: mimeType || undefined,
-      videoBitsPerSecond: target ? 4_500_000 : 3_500_000,
-    })
 
     const chunks: Blob[] = []
     recorder.ondataavailable = (e) => {
@@ -161,45 +178,62 @@ async function renderWithCanvas(
     const stopped = new Promise<Blob>((resolve, reject) => {
       recorder.onerror = () => reject(new Error('Falha ao gravar o vídeo exportado'))
       recorder.onstop = () => {
-        resolve(new Blob(chunks, { type: mimeType || 'video/webm' }))
+        resolve(
+          new Blob(chunks, {
+            type: recorder.mimeType || mimeType || 'video/webm',
+          }),
+        )
       }
     })
 
-    video.currentTime = 0
-    await waitFor(video, 'seeked').catch(() => undefined)
+    await seekVideo(video, 0)
+    onProgress?.(0.03)
 
-    recorder.start(250)
+    const clipDuration =
+      Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 30
 
-    const clipDuration = Number.isFinite(video.duration) ? video.duration : 30
+    recorder.start(200)
+
+    try {
+      await video.play()
+    } catch {
+      // Tenta de novo após gesto/estado muted
+      video.muted = true
+      await video.play()
+    }
+
+    onProgress?.(0.05)
 
     await new Promise<void>((resolve, reject) => {
       let raf = 0
-      let rvfc = 0
       let finished = false
-      const supportsRvfc = typeof video.requestVideoFrameCallback === 'function'
+      // requestVideoFrameCallback é instável em vários celulares — usa rAF
       const deadline = window.setTimeout(
         () => {
           if (!finished) {
+            // Se já gravou boa parte, finaliza em vez de falhar
+            if (video.currentTime > clipDuration * 0.85) {
+              finish()
+              return
+            }
             finished = true
             cleanupLoops()
             reject(
               new Error(
-                'A exportação demorou demais. Tente um trecho mais curto ou use o formato Normal.',
+                'A exportação demorou demais no celular. Tente um trecho mais curto ou o formato Normal.',
               ),
             )
           }
         },
-        Math.ceil(clipDuration * 1000) + 20_000,
+        Math.ceil(clipDuration * 1000) + 25_000,
       )
 
       const cleanupLoops = () => {
         window.clearTimeout(deadline)
         cancelAnimationFrame(raf)
-        if (supportsRvfc && typeof video.cancelVideoFrameCallback === 'function') {
-          video.cancelVideoFrameCallback(rvfc)
-        }
         video.removeEventListener('ended', onEnded)
         video.removeEventListener('error', onError)
+        video.removeEventListener('timeupdate', onTime)
       }
 
       const finish = () => {
@@ -217,57 +251,35 @@ async function renderWithCanvas(
         cleanupLoops()
         reject(new Error('Falha ao reproduzir o clip para exportar'))
       }
+      const onTime = () => {
+        if (finished) return
+        if (video.currentTime >= clipDuration - 0.08) finish()
+      }
 
       video.addEventListener('ended', onEnded)
       video.addEventListener('error', onError)
+      video.addEventListener('timeupdate', onTime)
 
-      const paint = () => {
+      const loop = () => {
         if (finished) return
         if (video.paused && !video.ended) {
           void video.play().catch(() => undefined)
-          return
-        }
-        if (target) {
-          drawCoverFrame(ctx, video, srcW, srcH, width, height)
         } else {
-          ctx.drawImage(video, 0, 0, width, height)
-        }
-        drawWatermark(ctx, watermark, width, height)
-        drawCaption(ctx, captions, video.currentTime, watermark, width, height)
-        if (clipDuration > 0) onProgress?.(Math.min(1, video.currentTime / clipDuration))
-      }
-
-      const loopRaf = () => {
-        if (finished) return
-        paint()
-        if (!finished) raf = requestAnimationFrame(loopRaf)
-      }
-
-      const loopRvfc = () => {
-        if (finished) return
-        paint()
-        if (!finished) rvfc = video.requestVideoFrameCallback(() => loopRvfc())
-      }
-
-      void video
-        .play()
-        .then(() => {
-          if (supportsRvfc) loopRvfc()
-          else loopRaf()
-        })
-        .catch((err) => {
-          if (!finished) {
-            finished = true
-            cleanupLoops()
-            reject(err instanceof Error ? err : new Error('Não foi possível iniciar a prévia'))
+          paintFrame(ctx, video, srcW, srcH, width, height, target, watermark, captions)
+          if (clipDuration > 0) {
+            onProgress?.(Math.min(0.98, video.currentTime / clipDuration))
           }
-        })
+        }
+        raf = requestAnimationFrame(loop)
+      }
+
+      raf = requestAnimationFrame(loop)
     })
 
-    await sleep(200)
+    await sleep(250)
     if (recorder.state !== 'inactive') recorder.stop()
 
-    const blob = await stopped
+    const blob = await withTimeout(stopped, 10_000, 'Falha ao finalizar a gravação do clip')
     await audioCtx?.close().catch(() => undefined)
 
     if (blob.size < 1024) {
@@ -277,6 +289,26 @@ async function renderWithCanvas(
   } finally {
     URL.revokeObjectURL(objectUrl)
   }
+}
+
+function paintFrame(
+  ctx: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  srcW: number,
+  srcH: number,
+  width: number,
+  height: number,
+  target: { width: number; height: number } | null,
+  watermark: WatermarkConfig | null,
+  captions: CaptionSegment[],
+) {
+  if (target) {
+    drawCoverFrame(ctx, video, srcW, srcH, width, height)
+  } else {
+    ctx.drawImage(video, 0, 0, width, height)
+  }
+  drawWatermark(ctx, watermark, width, height)
+  drawCaption(ctx, captions, video.currentTime, watermark, width, height)
 }
 
 function drawWatermark(
@@ -360,22 +392,46 @@ function wrapText(text: string, maxChars: number) {
 }
 
 function pickRecorderMime() {
-  const candidates = [
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm',
-    'video/mp4',
-  ]
+  const candidates = isApple()
+    ? ['video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm']
+    : [
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+        'video/mp4',
+      ]
   for (const type of candidates) {
-    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) {
-      return type
-    }
+    if (MediaRecorder.isTypeSupported(type)) return type
   }
   return ''
 }
 
-function waitFor(video: HTMLMediaElement, event: string) {
+function isMobile() {
+  return (
+    typeof navigator !== 'undefined' &&
+    (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1 && window.innerWidth < 900))
+  )
+}
+
+function isApple() {
+  return typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Macintosh/i.test(navigator.userAgent)
+}
+
+async function seekVideo(video: HTMLVideoElement, time: number) {
+  if (!Number.isFinite(video.duration) || video.duration <= 0) return
+  const target = Math.min(Math.max(0, time), Math.max(0, video.duration - 0.05))
+  if (Math.abs(video.currentTime - target) < 0.05) return
+  video.currentTime = target
+  await waitFor(video, 'seeked', 4_000).catch(() => undefined)
+}
+
+function waitFor(video: HTMLMediaElement, event: string, timeoutMs = 10_000) {
   return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      cleanup()
+      reject(new Error(`Timeout em ${event}`))
+    }, timeoutMs)
     const onOk = () => {
       cleanup()
       resolve()
@@ -385,11 +441,28 @@ function waitFor(video: HTMLMediaElement, event: string) {
       reject(new Error(`Falha em ${event}`))
     }
     const cleanup = () => {
+      window.clearTimeout(timer)
       video.removeEventListener(event, onOk)
       video.removeEventListener('error', onErr)
     }
     video.addEventListener(event, onOk, { once: true })
     video.addEventListener('error', onErr, { once: true })
+  })
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        window.clearTimeout(timer)
+        reject(err)
+      },
+    )
   })
 }
 

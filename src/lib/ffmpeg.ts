@@ -147,9 +147,12 @@ async function cutWithBrowser(
       recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType || 'video/webm' }))
     })
 
-    // Seek preciso no trecho
-    video.currentTime = Math.max(0, start)
-    await waitMedia(video, 'seeked')
+    // Seek preciso no trecho (com timeout — no mobile seeked pode não disparar)
+    const seekTo = Math.max(0, start)
+    if (Math.abs(video.currentTime - seekTo) >= 0.05) {
+      video.currentTime = seekTo
+      await waitMedia(video, 'seeked', 5_000).catch(() => undefined)
+    }
 
     recorder.start(200)
 
@@ -667,8 +670,12 @@ function pickRecorderMime() {
   return ''
 }
 
-function waitMedia(video: HTMLMediaElement, event: string) {
+function waitMedia(video: HTMLMediaElement, event: string, timeoutMs = 12_000) {
   return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      cleanup()
+      reject(new Error(`Timeout em ${event}`))
+    }, timeoutMs)
     const onOk = () => {
       cleanup()
       resolve()
@@ -678,6 +685,7 @@ function waitMedia(video: HTMLMediaElement, event: string) {
       reject(new Error(`Falha em ${event}`))
     }
     const cleanup = () => {
+      window.clearTimeout(timer)
       video.removeEventListener(event, onOk)
       video.removeEventListener('error', onErr)
     }

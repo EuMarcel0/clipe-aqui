@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { getClipByShareToken, resolveClipMediaUrl } from '../lib/clips'
 import { ClipPlayer } from '../components/ClipPlayer'
 import type { ClipRow } from '../types'
@@ -28,49 +28,57 @@ export function SharePage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-3">
-        <span className="h-8 w-8 animate-spin rounded-full border-2 border-ink/10 border-t-accent" />
-        <p className="text-sm text-muted">Abrindo clip…</p>
-      </div>
+      <ShareChrome>
+        <div className="flex flex-1 flex-col items-center justify-center gap-3">
+          <span className="h-8 w-8 animate-spin rounded-full border-2 border-ink/10 border-t-accent" />
+          <p className="text-sm text-muted">Abrindo clip…</p>
+        </div>
+      </ShareChrome>
     )
   }
 
   if (error || !clip) {
     return (
-      <div className="surface mt-10 rounded-3xl p-8 text-center">
-        <p className="font-display text-2xl font-bold">Link indisponível</p>
-        <p className="mt-2 text-sm text-muted">{error ?? 'Clip não encontrado.'}</p>
-      </div>
+      <ShareChrome>
+        <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
+          <p className="font-display text-2xl font-bold">Link indisponível</p>
+          <p className="mt-2 text-sm text-muted">{error ?? 'Clip não encontrado.'}</p>
+        </div>
+      </ShareChrome>
     )
   }
 
   const mediaUrl = resolveClipMediaUrl(clip)
 
   return (
-    <div className="slide-up space-y-4">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Clipe Aqui</p>
-        <h1 className="mt-1 font-display text-2xl font-bold tracking-tight">{clip.title}</h1>
-      </div>
-
+    <ShareChrome>
       {mediaUrl ? (
-        <ClipPlayer src={mediaUrl} captions={clip.captions} />
-      ) : (
-        <p className="text-sm text-muted">Vídeo ainda não disponível.</p>
-      )}
-
-      {Array.isArray(clip.captions) && clip.captions.length > 0 ? (
-        <div className="surface rounded-3xl p-4">
-          <p className="font-display text-base font-bold">Legendas</p>
-          <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
-            {clip.captions.map((c, i) => (
-              <p key={`${c.start}-${i}`} className="text-sm leading-relaxed text-ink/75">
-                {c.text}
-              </p>
-            ))}
-          </div>
+        <div className="flex flex-1 items-center justify-center">
+          <ClipPlayer
+            src={mediaUrl}
+            captions={[]}
+            aspectClassName="aspect-[9/16] max-h-[min(78dvh,720px)] w-full object-contain"
+          />
         </div>
-      ) : null}
+      ) : (
+        <p className="text-center text-sm text-muted">Vídeo ainda não disponível.</p>
+      )}
+    </ShareChrome>
+  )
+}
+
+function ShareChrome({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mx-auto flex min-h-dvh max-w-lg flex-col px-4 pb-6 pt-4 sm:max-w-xl">
+      <header className="mb-5">
+        <Link to="/" className="inline-flex items-center gap-2.5">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-accent text-white">
+            <span className="font-display text-sm font-bold tracking-tight">CA</span>
+          </span>
+          <p className="font-display text-lg font-bold tracking-tight text-ink">Clipe Aqui</p>
+        </Link>
+      </header>
+      <main className="flex flex-1 flex-col">{children}</main>
     </div>
   )
 }

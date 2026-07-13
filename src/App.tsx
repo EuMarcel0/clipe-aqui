@@ -33,7 +33,11 @@ function LoadingScreen() {
 
 function ShellLayout({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation()
-  if (pathname === '/' || pathname.startsWith('/auth/callback')) {
+  if (
+    pathname === '/' ||
+    pathname.startsWith('/auth/callback') ||
+    pathname.startsWith('/s/')
+  ) {
     return <>{children}</>
   }
   return <AppShell>{children}</AppShell>

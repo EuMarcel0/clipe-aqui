@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,6 +9,7 @@ const corsHeaders = {
 
 /** whisper-1 ≈ US$ 0.006 / minuto — timestamps por segmento confiáveis p/ legendas */
 const COST_PER_MINUTE_USD = 0.006;
+const FREE_LIFETIME_CLIPS = 10;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -18,6 +20,45 @@ Deno.serve(async (req) => {
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
     if (!openaiKey) {
       return json({ error: "OPENAI_API_KEY não configurada" }, 500);
+    }
+
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) return json({ error: "Não autenticado" }, 401);
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+      return json({ error: "Variáveis SUPABASE_* ausentes" }, 500);
+    }
+
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const {
+      data: { user },
+      error: userError,
+    } = await userClient.auth.getUser();
+    if (userError || !user) return json({ error: "Sessão inválida" }, 401);
+
+    const admin = createClient(supabaseUrl, serviceRoleKey);
+    const { data: profile } = await admin
+      .from("users")
+      .select("credits, lifetime_clips_created")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const lifetime = Number(profile?.lifetime_clips_created ?? 0);
+    const credits = Number(profile?.credits ?? 0);
+    const canCreate = lifetime < FREE_LIFETIME_CLIPS || credits > 0;
+    if (!canCreate) {
+      return json(
+        {
+          error:
+            "QUOTA_EXCEEDED: Limite grátis de 10 clips atingido. Compre créditos para gerar legendas.",
+        },
+        402,
+      );
     }
 
     const form = await req.formData();

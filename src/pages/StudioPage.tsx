@@ -137,6 +137,13 @@ export function StudioPage() {
 
   const generateCaptions = async () => {
     if (!file) return
+    if (quotaBlocked || (billing && !billing.can_create)) {
+      setQuotaBlocked(true)
+      setError(
+        'Limite grátis de 10 clips atingido. Compre créditos para gerar legendas e salvar.',
+      )
+      return
+    }
     setBusy(true)
     setError(null)
     setProgress('Extraindo áudio do trecho…')
@@ -158,6 +165,10 @@ export function StudioPage() {
       setCostUsd(result.estimated_cost_usd)
       setStep('captions')
     } catch (err) {
+      if (isQuotaExceededError(err)) {
+        setQuotaBlocked(true)
+        void refreshBilling()
+      }
       setError(getErrorMessage(err, 'Não foi possível gerar as legendas. Tente de novo.'))
     } finally {
       setBusy(false)
@@ -443,7 +454,8 @@ export function StudioPage() {
                   Você usou seus 10 clips grátis
                 </p>
                 <p className="mt-1 text-sm text-muted">
-                  Compre créditos para salvar novos clips. 1 crédito = 1 clip.
+                  Compre créditos para gerar legendas e salvar clips. 1 crédito = 1
+                  clip.
                 </p>
                 <Link
                   to="/planos"
@@ -471,6 +483,7 @@ export function StudioPage() {
                 type="button"
                 variant="ghost"
                 loading={busy}
+                disabled={quotaBlocked}
                 onClick={() => void generateCaptions()}
               >
                 <Captions className="h-4 w-4" />

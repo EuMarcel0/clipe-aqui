@@ -147,6 +147,10 @@ async function recordSegment(
   video.volume = 0
   video.crossOrigin = 'anonymous'
   video.src = objectUrl
+  // Safari precisa do elemento no DOM para decodificar áudio de forma estável
+  video.style.cssText =
+    'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-99px;top:-99px'
+  document.body.appendChild(video)
 
   try {
     await ensureVideoReady(video)
@@ -188,9 +192,13 @@ async function recordSegment(
       0,
     )
 
-    // fps=0 → frames manuais via requestFrame (evita vídeo travar e áudio seguir)
+    // Safari: captureStream(0) + requestFrame é flaky; Chrome: fps=0 + requestFrame
+    // evita vídeo congelar com áudio seguindo.
+    const useManualFrames = !isApple()
     const captureStream =
-      typeof canvas.captureStream === 'function' ? canvas.captureStream(0) : null
+      typeof canvas.captureStream === 'function'
+        ? canvas.captureStream(useManualFrames ? 0 : 24)
+        : null
     if (!captureStream) {
       throw new Error('Este navegador não suporte exportar vídeo com legendas.')
     }
@@ -199,35 +207,13 @@ async function recordSegment(
       | (MediaStreamTrack & { requestFrame?: () => void })
       | undefined
 
-    const videoStream =
-      (
-        video as HTMLVideoElement & {
-          captureStream?: () => MediaStream
-          mozCaptureStream?: () => MediaStream
-        }
-      ).captureStream?.() ||
-      (
-        video as HTMLVideoElement & { mozCaptureStream?: () => MediaStream }
-      ).mozCaptureStream?.()
-
     const tracks: MediaStreamTrack[] = [...captureStream.getVideoTracks()]
-    if (videoStream) {
-      for (const track of videoStream.getAudioTracks()) tracks.push(track)
-    }
 
+    // Áudio: preferir Web Audio (Safari ignora/corta áudio de vídeo muted via captureStream).
+    // createMediaElementSource desconecta os alto-falantes → pode desmutar sem eco.
     let audioCtx: AudioContext | null = null
-    if (tracks.length === 1) {
-      try {
-        audioCtx = new AudioContext()
-        if (audioCtx.state === 'suspended') await audioCtx.resume().catch(() => undefined)
-        const sourceNode = audioCtx.createMediaElementSource(video)
-        const dest = audioCtx.createMediaStreamDestination()
-        sourceNode.connect(dest)
-        for (const track of dest.stream.getAudioTracks()) tracks.push(track)
-      } catch {
-        // só vídeo
-      }
-    }
+    const audioWired = await wireExportAudio(video, tracks)
+    audioCtx = audioWired.audioCtx
 
     const mimeType = pickRecorderMime()
     const bits = isMobile()
@@ -241,9 +227,17 @@ async function recordSegment(
       recorder = new MediaRecorder(new MediaStream(tracks), {
         mimeType: mimeType || undefined,
         videoBitsPerSecond: bits,
+        audioBitsPerSecond: 128_000,
       })
     } catch {
-      recorder = new MediaRecorder(new MediaStream(tracks))
+      try {
+        recorder = new MediaRecorder(new MediaStream(tracks), {
+          mimeType: mimeType || undefined,
+          videoBitsPerSecond: bits,
+        })
+      } catch {
+        recorder = new MediaRecorder(new MediaStream(tracks))
+      }
     }
 
     const chunks: Blob[] = []
@@ -265,15 +259,29 @@ async function recordSegment(
     const segmentDuration = Math.max(0.2, end - start)
     options.onProgress?.(0.04)
 
-    // timeslice maior = menos overhead; Chrome ainda gera keyframes periódicos
-    recorder.start(1000)
-    pushCanvasFrame(ctx, canvasTrack)
+    // Safari/iOS: timeslice corrompe/corta o áudio no meio do arquivo.
+    // Sem timeslice → um único blob no stop (mais estável no mobile).
+    if (isApple() || isMobile()) {
+      recorder.start()
+    } else {
+      recorder.start(1000)
+    }
+    pushCanvasFrame(ctx, canvasTrack, useManualFrames)
 
     try {
       await video.play()
     } catch {
-      video.muted = true
-      await video.play()
+      // Autoplay bloqueou com som: tenta muted só se não houver track de áudio via Web Audio
+      if (!audioCtx) {
+        video.muted = true
+        await video.play()
+      } else {
+        throw new Error('Não foi possível iniciar a exportação com áudio neste Safari.')
+      }
+    }
+
+    if (audioCtx?.state === 'suspended') {
+      await audioCtx.resume().catch(() => undefined)
     }
 
     options.onProgress?.(0.06)
@@ -327,7 +335,7 @@ async function recordSegment(
           options.captions,
           clipTime,
         )
-        pushCanvasFrame(ctx, canvasTrack)
+        pushCanvasFrame(ctx, canvasTrack, useManualFrames)
       }
 
       const finish = () => {
@@ -364,6 +372,9 @@ async function recordSegment(
 
       const paintOnce = () => {
         if (finished) return
+        if (audioCtx?.state === 'suspended') {
+          void audioCtx.resume().catch(() => undefined)
+        }
         if (video.paused && !video.ended) {
           void video.play().catch(() => undefined)
         }
@@ -389,7 +400,7 @@ async function recordSegment(
     })
 
     await sleep(300)
-    pushCanvasFrame(ctx, canvasTrack)
+    pushCanvasFrame(ctx, canvasTrack, useManualFrames)
     if (recorder.state !== 'inactive') recorder.stop()
 
     const blob = await withTimeout(stopped, 12_000, 'Falha ao finalizar a gravação do clip')
@@ -407,6 +418,7 @@ async function recordSegment(
     if (blob.size < 1024) throw new Error('Exportação do clip ficou vazia')
     return blob
   } finally {
+    video.remove()
     URL.revokeObjectURL(objectUrl)
   }
 }
@@ -415,6 +427,7 @@ async function recordSegment(
 function pushCanvasFrame(
   ctx: CanvasRenderingContext2D,
   track?: MediaStreamTrack & { requestFrame?: () => void },
+  manual = true,
 ) {
   // Marca o bitmap como “sujo” mesmo se o frame do vídeo for igual
   const prev = ctx.globalAlpha
@@ -422,7 +435,70 @@ function pushCanvasFrame(
   ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, 1, 1)
   ctx.globalAlpha = prev
-  track?.requestFrame?.()
+  if (manual) track?.requestFrame?.()
+}
+
+/**
+ * Liga áudio do <video> ao MediaRecorder.
+ * Preferência: Web Audio (estável no Safari) → fallback captureStream.
+ */
+async function wireExportAudio(
+  video: HTMLVideoElement,
+  tracks: MediaStreamTrack[],
+): Promise<{ audioCtx: AudioContext | null }> {
+  // Desmutar: MediaElementSource captura silêncio se muted=true (Safari rigoroso).
+  video.muted = false
+  video.defaultMuted = false
+  video.volume = 1
+
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioCtx) throw new Error('no AudioContext')
+
+    const audioCtx = new AudioCtx()
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume().catch(() => undefined)
+    }
+    const sourceNode = audioCtx.createMediaElementSource(video)
+    const dest = audioCtx.createMediaStreamDestination()
+    sourceNode.connect(dest)
+    // Sem connect(destination) → sem som pelos alto-falantes durante a exportação
+    const audioTracks = dest.stream.getAudioTracks()
+    if (!audioTracks.length) {
+      await audioCtx.close().catch(() => undefined)
+      throw new Error('no audio tracks from Web Audio')
+    }
+    for (const track of audioTracks) tracks.push(track)
+    return { audioCtx }
+  } catch {
+    // Fallback: faixa de áudio do próprio elemento
+    try {
+      const videoStream =
+        (
+          video as HTMLVideoElement & {
+            captureStream?: () => MediaStream
+            mozCaptureStream?: () => MediaStream
+          }
+        ).captureStream?.() ||
+        (
+          video as HTMLVideoElement & { mozCaptureStream?: () => MediaStream }
+        ).mozCaptureStream?.()
+
+      const fromEl = videoStream?.getAudioTracks() ?? []
+      if (fromEl.length) {
+        for (const track of fromEl) tracks.push(track)
+        return { audioCtx: null }
+      }
+    } catch {
+      // só vídeo
+    }
+    // Sem áudio disponível — volta muted para não quebrar autoplay se play() ainda não rodou
+    video.muted = true
+    video.defaultMuted = true
+    return { audioCtx: null }
+  }
 }
 
 function paintFrame(

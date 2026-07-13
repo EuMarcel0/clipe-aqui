@@ -1,6 +1,6 @@
 import type { CaptionSegment, ExportPreset, WatermarkConfig } from '../types'
 import { getActiveCaptionAt, normalizeCaptionSegments } from './captions'
-import { getReelsExportFrame, drawCoverFrame } from './exportPresets'
+import { getReelsExportFrame, drawContainFrame } from './exportPresets'
 
 type ExportOptions = {
   preset: ExportPreset
@@ -188,11 +188,16 @@ async function recordSegment(
       0,
     )
 
+    // fps=0 → frames manuais via requestFrame (evita vídeo travar e áudio seguir)
     const captureStream =
-      typeof canvas.captureStream === 'function' ? canvas.captureStream(24) : null
+      typeof canvas.captureStream === 'function' ? canvas.captureStream(0) : null
     if (!captureStream) {
       throw new Error('Este navegador não suporte exportar vídeo com legendas.')
     }
+
+    const canvasTrack = captureStream.getVideoTracks()[0] as
+      | (MediaStreamTrack & { requestFrame?: () => void })
+      | undefined
 
     const videoStream =
       (
@@ -225,11 +230,17 @@ async function recordSegment(
     }
 
     const mimeType = pickRecorderMime()
+    const bits = isMobile()
+      ? 2_000_000
+      : options.target
+        ? 3_500_000
+        : 3_000_000
+
     let recorder: MediaRecorder
     try {
       recorder = new MediaRecorder(new MediaStream(tracks), {
         mimeType: mimeType || undefined,
-        videoBitsPerSecond: isMobile() ? 2_500_000 : options.target ? 4_500_000 : 3_500_000,
+        videoBitsPerSecond: bits,
       })
     } catch {
       recorder = new MediaRecorder(new MediaStream(tracks))
@@ -254,7 +265,9 @@ async function recordSegment(
     const segmentDuration = Math.max(0.2, end - start)
     options.onProgress?.(0.04)
 
-    recorder.start(200)
+    // timeslice maior = menos overhead; Chrome ainda gera keyframes periódicos
+    recorder.start(1000)
+    pushCanvasFrame(ctx, canvasTrack)
 
     try {
       await video.play()
@@ -266,8 +279,12 @@ async function recordSegment(
     options.onProgress?.(0.06)
 
     await new Promise<void>((resolve, reject) => {
-      let raf = 0
+      let tick: number | null = null
       let finished = false
+      let lastProgressAt = 0
+      const FPS = 24
+      const frameMs = 1000 / FPS
+
       const deadline = window.setTimeout(
         () => {
           if (!finished) {
@@ -289,15 +306,34 @@ async function recordSegment(
 
       const cleanup = () => {
         window.clearTimeout(deadline)
-        cancelAnimationFrame(raf)
+        if (tick != null) window.clearInterval(tick)
         video.removeEventListener('ended', onEnded)
         video.removeEventListener('error', onError)
         video.removeEventListener('timeupdate', onTime)
+        video.removeEventListener('waiting', onWaiting)
+        video.removeEventListener('stalled', onWaiting)
+      }
+
+      const drawAt = (clipTime: number) => {
+        paintFrame(
+          ctx,
+          video,
+          srcW,
+          srcH,
+          width,
+          height,
+          options.target,
+          options.watermark,
+          options.captions,
+          clipTime,
+        )
+        pushCanvasFrame(ctx, canvasTrack)
       }
 
       const finish = () => {
         if (finished) return
         finished = true
+        drawAt(Math.max(0, Math.min(segmentDuration, video.currentTime - start)))
         cleanup()
         video.pause()
         resolve()
@@ -313,53 +349,80 @@ async function recordSegment(
       const onTime = () => {
         if (video.currentTime >= end - 0.05) finish()
       }
+      const onWaiting = () => {
+        // Buffering: mantém frames no canvas para o vídeo não “morrer” no WebM
+        if (!finished) {
+          drawAt(Math.max(0, video.currentTime - start))
+        }
+      }
 
       video.addEventListener('ended', onEnded)
       video.addEventListener('error', onError)
       video.addEventListener('timeupdate', onTime)
+      video.addEventListener('waiting', onWaiting)
+      video.addEventListener('stalled', onWaiting)
 
-      const loop = () => {
+      const paintOnce = () => {
         if (finished) return
         if (video.paused && !video.ended) {
           void video.play().catch(() => undefined)
-        } else {
-          const t = video.currentTime
-          if (t >= end - 0.02) {
-            finish()
-            return
-          }
-          const clipTime = Math.max(0, t - start)
-          paintFrame(
-            ctx,
-            video,
-            srcW,
-            srcH,
-            width,
-            height,
-            options.target,
-            options.watermark,
-            options.captions,
-            clipTime,
-          )
+        }
+        const t = video.currentTime
+        if (t >= end - 0.02) {
+          finish()
+          return
+        }
+        const clipTime = Math.max(0, t - start)
+        drawAt(clipTime)
+
+        const now = performance.now()
+        if (now - lastProgressAt > 200) {
+          lastProgressAt = now
           options.onProgress?.(Math.min(0.98, clipTime / segmentDuration))
         }
-        raf = requestAnimationFrame(loop)
       }
 
-      raf = requestAnimationFrame(loop)
+      // Clock próprio + requestFrame: não depende do RAF (engasga com React/GC)
+      // nem do captureStream(fps), que para de emitir se o canvas “não muda”.
+      tick = window.setInterval(paintOnce, frameMs)
+      paintOnce()
     })
 
-    await sleep(250)
+    await sleep(300)
+    pushCanvasFrame(ctx, canvasTrack)
     if (recorder.state !== 'inactive') recorder.stop()
 
     const blob = await withTimeout(stopped, 12_000, 'Falha ao finalizar a gravação do clip')
     await audioCtx?.close().catch(() => undefined)
+
+    // Para tracks para liberar encoder
+    for (const t of tracks) {
+      try {
+        t.stop()
+      } catch {
+        // ignore
+      }
+    }
 
     if (blob.size < 1024) throw new Error('Exportação do clip ficou vazia')
     return blob
   } finally {
     URL.revokeObjectURL(objectUrl)
   }
+}
+
+/** Força o Chrome a capturar um frame novo do canvas (bug clássico do captureStream). */
+function pushCanvasFrame(
+  ctx: CanvasRenderingContext2D,
+  track?: MediaStreamTrack & { requestFrame?: () => void },
+) {
+  // Marca o bitmap como “sujo” mesmo se o frame do vídeo for igual
+  const prev = ctx.globalAlpha
+  ctx.globalAlpha = 0.01
+  ctx.fillStyle = '#000'
+  ctx.fillRect(0, 0, 1, 1)
+  ctx.globalAlpha = prev
+  track?.requestFrame?.()
 }
 
 function paintFrame(
@@ -375,7 +438,7 @@ function paintFrame(
   clipTime: number,
 ) {
   if (target) {
-    drawCoverFrame(ctx, video, srcW, srcH, width, height)
+    drawContainFrame(ctx, video, srcW, srcH, width, height)
   } else {
     ctx.drawImage(video, 0, 0, width, height)
   }

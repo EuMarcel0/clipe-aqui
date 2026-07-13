@@ -9,13 +9,23 @@ import {
 } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
+import { syncCurrentUser } from '../lib/users'
+import { signInWithGoogle as startGoogleOAuth } from '../lib/google-oauth'
+
+export type SignUpInput = {
+  email: string
+  password: string
+  fullName: string
+  whatsapp: string
+}
 
 type AuthContextValue = {
   user: User | null
   session: Session | null
   loading: boolean
   signIn: (email: string, password: string) => Promise<void>
-  signUp: (email: string, password: string) => Promise<void>
+  signUp: (input: SignUpInput) => Promise<{ needsEmailConfirm: boolean }>
+  signInWithGoogle: (next?: string) => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -42,10 +52,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) throw error
+    // Garante linha em public.users (útil para contas antigas)
+    await syncCurrentUser().catch((err) => {
+      console.warn('syncCurrentUser após login:', err)
+    })
   }, [])
 
-  const signUp = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({ email, password })
+  const signUp = useCallback(async (input: SignUpInput) => {
+    const whatsappDigits = input.whatsapp.replace(/\D/g, '')
+    const { data, error } = await supabase.auth.signUp({
+      email: input.email.trim(),
+      password: input.password,
+      options: {
+        data: {
+          full_name: input.fullName.trim(),
+          whatsapp: whatsappDigits,
+        },
+      },
+    })
+    if (error) throw error
+
+    const needsEmailConfirm = Boolean(data.user && !data.session)
+
+    if (data.session) {
+      await syncCurrentUser().catch((err) => {
+        console.warn('syncCurrentUser após signup:', err)
+      })
+    }
+
+    return { needsEmailConfirm }
+  }, [])
+
+  const signInWithGoogle = useCallback(async (next = '/criar') => {
+    const { error } = await startGoogleOAuth(next)
     if (error) throw error
   }, [])
 
@@ -61,9 +100,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       signIn,
       signUp,
+      signInWithGoogle,
       signOut,
     }),
-    [session, loading, signIn, signUp, signOut],
+    [session, loading, signIn, signUp, signInWithGoogle, signOut],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

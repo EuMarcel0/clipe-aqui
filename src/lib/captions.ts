@@ -1,9 +1,33 @@
 import type { CaptionSegment } from '../types'
 
 const MIN_DURATION = 0.4
-const HOLD_PAD = 0.45
+const HOLD_PAD = 0.35
 /** Lacunas menores que isso são preenchidas (mantém a legenda anterior até a próxima). */
 const FILL_GAP = 1.35
+
+/**
+ * Quando a extração de áudio perde o começo do trecho, o Whisper marca a fala
+ * cedo demais. Se o áudio ficou mais curto que o clip, deslocamos os timestamps.
+ */
+export function alignCaptionsToAudioDuration(
+  segments: CaptionSegment[],
+  clipDuration: number,
+  audioDuration: number,
+): CaptionSegment[] {
+  if (!segments.length || clipDuration <= 0 || audioDuration <= 0) return segments
+
+  const missingHead = clipDuration - audioDuration
+  // Lag típico do MediaRecorder / seek incompleto no mobile
+  if (missingHead >= 0.2 && missingHead <= 12) {
+    return segments.map((s) => ({
+      ...s,
+      start: Math.max(0, s.start + missingHead),
+      end: Math.max(0, s.end + missingHead),
+    }))
+  }
+
+  return segments
+}
 
 /**
  * Ajusta timestamps do Whisper para evitar “buracos” em que a fala continua
@@ -36,24 +60,29 @@ export function normalizeCaptionSegments(
       if (end >= next.start) {
         end = Math.max(start + MIN_DURATION, next.start - 0.04)
       } else if (next.start - end <= FILL_GAP) {
-        // Preenche gap curto: mantém texto até a próxima fala
         end = next.start
       }
     } else if (clipDuration > 0) {
-      // Último segmento: segura um pouco mais, sem forçar o clip inteiro
-      // se o Whisper terminou muito cedo.
       const remain = clipDuration - end
       if (remain > 0) {
         const extra =
           cleaned.length === 1
-            ? Math.min(remain - 0.05, Math.max(1.2, clipDuration * 0.35))
-            : Math.min(remain - 0.05, 1.6)
+            ? Math.min(remain - 0.05, Math.max(0.8, clipDuration * 0.2))
+            : Math.min(remain - 0.05, 1.2)
         if (extra > 0) end += extra
       }
       end = Math.min(end, Math.max(start + MIN_DURATION, clipDuration - 0.05))
     }
 
     out.push({ start, end: Math.max(end, start + MIN_DURATION), text: cur.text })
+  }
+
+  if (clipDuration > 0) {
+    return out.map((s) => ({
+      ...s,
+      start: Math.min(s.start, Math.max(0, clipDuration - MIN_DURATION)),
+      end: Math.min(s.end, clipDuration),
+    }))
   }
 
   return out
@@ -72,11 +101,9 @@ export function getActiveCaptionAt(
   const exact = list.find((c) => t >= c.start && t < c.end)
   if (exact) return exact
 
-  // Inclusive no fim (último frame / arredondamento)
   const atEnd = list.find((c) => t >= c.start && t <= c.end + 0.08)
   if (atEnd) return atEnd
 
-  // Segura a anterior em gaps curtos
   for (let i = 0; i < list.length - 1; i++) {
     const cur = list[i]
     const next = list[i + 1]

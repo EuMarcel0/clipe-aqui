@@ -6,7 +6,7 @@ import { HeroReelCanvas } from '../components/HeroReelCanvas'
 
 export function LandingPage() {
   const { user } = useAuth()
-  const [videoOk, setVideoOk] = useState(false)
+  // const [videoOk, setVideoOk] = useState(false)
   const [ready, setReady] = useState(false)
   const startTo = user ? '/criar' : '/auth'
 
@@ -21,6 +21,10 @@ export function LandingPage() {
       <section className="relative isolate min-h-dvh overflow-hidden">
         {/* Mídia dominante */}
         <div className="absolute inset-0">
+          {/*
+            Hero com narração (personagem + TTS) — pausado por enquanto.
+            Assets em public/hero.mp4 e public/hero-assets/ (narration.mp3, person.png, script.txt).
+            Descomentar o <video> abaixo e o estado videoOk quando quiser reativar.
           <video
             className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${
               videoOk ? 'opacity-100' : 'opacity-0'
@@ -35,6 +39,8 @@ export function LandingPage() {
             onError={() => setVideoOk(false)}
           />
           {!videoOk ? <HeroReelCanvas /> : null}
+          */}
+          <HeroReelCanvas />
           {/* Scrim só para legibilidade tipográfica */}
           <div
             className="absolute inset-0"

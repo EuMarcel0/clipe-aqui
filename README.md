@@ -13,21 +13,38 @@ Copie `.env.example` → `.env` (já há um `.env` no projeto):
 ```env
 VITE_SUPABASE_URL=https://egupwrwzcuqazlshhfoq.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sua_publishable_key
+VITE_APP_URL=http://localhost:5173
 ```
 
 > No Vite o prefixo é `VITE_` (não `NEXT_PUBLIC_`). Use a mesma URL/key do Supabase.
 
 ### 2. Banco (SQL)
 
-No **SQL Editor** do Supabase, rode:
+No **SQL Editor** do Supabase, rode nesta ordem:
 
-`supabase/migrations/001_clips.sql`
+1. `supabase/migrations/001_clips.sql` — tabela `clips` + RLS  
+2. `supabase/migrations/002_users.sql` — tabela `users` + trigger ao cadastrar no Auth  
 
-Isso cria só a tabela `clips` + RLS. Não mexe nas tabelas que você já tem.
+O trigger `on_auth_user_created` cria a linha em `public.users` com nome, e-mail e WhatsApp vindos do metadata do signup.
 
-### 3. Auth
+### 3. Auth (e-mail + Google)
 
-Em Authentication → Providers, deixe **Email** ativo.  
+Em Authentication → Providers:
+- **Email** ativo  
+- **Google** ativo, com Client ID / Secret do Google Cloud  
+
+Console Google (criar projeto + OAuth):  
+https://console.cloud.google.com/projectcreate  
+
+Credenciais OAuth:  
+https://console.cloud.google.com/apis/credentials  
+
+**Redirect URI no Google** (Authorized redirect URIs):  
+`https://egupwrwzcuqazlshhfoq.supabase.co/auth/v1/callback`
+
+**Redirect URLs no Supabase** (URL Configuration):  
+`http://localhost:5173/**` e `https://clipe-aqui.vercel.app/**` (inclua `/auth/callback`).
+
 Para desenvolvimento, pode desativar “Confirm email”.
 
 ### 4. Secrets das Edge Functions

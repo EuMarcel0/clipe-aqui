@@ -374,7 +374,7 @@ export async function extractAudioFromBlob(videoBlob: Blob): Promise<Blob> {
 
 /**
  * Extrai só o áudio do intervalo [start, end] do arquivo original.
- * Bem mais leve que cortar o vídeo inteiro só para legendar (especialmente no celular).
+ * Prefere ffmpeg (timestamps fiéis); browser é fallback.
  */
 export async function extractAudioRange(
   file: File | Blob,
@@ -384,12 +384,22 @@ export async function extractAudioRange(
   const duration = Math.max(0.2, end - start)
 
   try {
-    const browser = await extractAudioRangeBrowser(file, start, end)
-    if (browser.size >= 64) return browser
+    const ffAudio = await extractAudioRangeFfmpeg(file, start, duration)
+    if (ffAudio.size >= 64) return ffAudio
   } catch (err) {
-    console.warn('Extract audio range browser falhou, tentando ffmpeg:', err)
+    console.warn('Extract audio range ffmpeg falhou, tentando browser:', err)
   }
 
+  const browser = await extractAudioRangeBrowser(file, start, end)
+  if (browser.size < 64) throw new Error('Áudio do trecho ficou vazio')
+  return browser
+}
+
+async function extractAudioRangeFfmpeg(
+  file: File | Blob,
+  start: number,
+  duration: number,
+): Promise<Blob> {
   const ff = await getFFmpeg()
   const id = ++opCounter
   const inputName =
@@ -400,11 +410,12 @@ export async function extractAudioRange(
 
   await ff.writeFile(inputName, await fetchFile(file))
   try {
+    // -ss DEPOIS de -i: corte mais preciso no ponto da fala
     await ff.exec([
-      '-ss',
-      String(Math.max(0, start)),
       '-i',
       inputName,
+      '-ss',
+      String(Math.max(0, start)),
       '-t',
       String(duration),
       '-vn',
@@ -441,7 +452,7 @@ async function extractAudioRangeBrowser(
     video.muted = false
     video.volume = 0
     video.playsInline = true
-    await waitMedia(video, 'loadeddata')
+    await waitMedia(video, 'loadeddata', 15_000)
 
     const stream =
       (
@@ -460,6 +471,7 @@ async function extractAudioRangeBrowser(
       audioStream = new MediaStream(stream.getAudioTracks())
     } else {
       audioCtx = new AudioContext()
+      if (audioCtx.state === 'suspended') await audioCtx.resume().catch(() => undefined)
       const source = audioCtx.createMediaElementSource(video)
       const dest = audioCtx.createMediaStreamDestination()
       source.connect(dest)
@@ -486,13 +498,32 @@ async function extractAudioRangeBrowser(
         resolve(new Blob(chunks, { type: mime || 'audio/webm' }))
     })
 
-    video.currentTime = Math.max(0, start)
-    await waitMedia(video, 'seeked').catch(() => undefined)
-    recorder.start(200)
+    // Seek + priming: evita gravar “vazio” no início (dessincroniza o Whisper)
+    const seekTo = Math.max(0, start)
+    video.currentTime = seekTo
+    await waitMedia(video, 'seeked', 6_000).catch(() => undefined)
+    await sleep(120)
+
+    try {
+      await video.play()
+      // Descarta um pouco de áudio instável pós-seek
+      await sleep(180)
+      video.pause()
+      video.currentTime = seekTo
+      await waitMedia(video, 'seeked', 4_000).catch(() => undefined)
+      await sleep(80)
+    } catch {
+      // segue mesmo assim
+    }
+
+    recorder.start(100)
     await video.play()
 
+    // Só conta o tempo depois que o play realmente avançou perto do start
+    const playStartedAt = performance.now()
     await new Promise<void>((resolve, reject) => {
       let finished = false
+      let armed = false
       const finish = () => {
         if (finished) return
         finished = true
@@ -504,17 +535,29 @@ async function extractAudioRangeBrowser(
         resolve()
       }
       const onTime = () => {
+        if (!armed) {
+          if (video.currentTime >= seekTo - 0.15) armed = true
+          return
+        }
         if (video.currentTime >= end - 0.05) finish()
       }
       const onEnded = () => finish()
       const onError = () => reject(new Error('Erro ao ler áudio do vídeo'))
       const watchdog = window.setTimeout(
         () => finish(),
-        Math.ceil((end - start) * 1000) + 8000,
+        Math.ceil((end - start) * 1000) + 10_000,
       )
       video.addEventListener('timeupdate', onTime)
       video.addEventListener('ended', onEnded)
       video.addEventListener('error', onError)
+
+      // Se o play engasgar no start, aborta cedo
+      window.setTimeout(() => {
+        if (!armed && performance.now() - playStartedAt > 2500) {
+          // força armar mesmo assim
+          armed = true
+        }
+      }, 2600)
     })
 
     if (recorder.state !== 'inactive') recorder.stop()

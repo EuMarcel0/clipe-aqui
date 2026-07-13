@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import { AppShell } from './components/AppShell'
 import { AuthPage } from './pages/AuthPage'
+import { AuthCallbackPage } from './pages/AuthCallbackPage'
 import { LandingPage } from './pages/LandingPage'
 import { StudioPage } from './pages/StudioPage'
 import { LibraryPage } from './pages/LibraryPage'
@@ -32,7 +33,9 @@ function LoadingScreen() {
 
 function ShellLayout({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation()
-  if (pathname === '/') return <>{children}</>
+  if (pathname === '/' || pathname.startsWith('/auth/callback')) {
+    return <>{children}</>
+  }
   return <AppShell>{children}</AppShell>
 }
 
@@ -51,6 +54,7 @@ export default function App() {
                 </PublicOnly>
               }
             />
+            <Route path="/auth/callback" element={<AuthCallbackPage />} />
             <Route
               path="/criar"
               element={

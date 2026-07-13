@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from 'react'
-import { Captions, CheckCircle2, ExternalLink, Plus, Upload } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Captions, CheckCircle2, Download, ExternalLink, Plus, Upload } from 'lucide-react'
 import { VideoTrimmer } from '../components/VideoTrimmer'
 import { Button } from '../components/Button'
 import { SharePanel } from '../components/SharePanel'
@@ -11,12 +11,15 @@ import {
   updateClip,
   uploadClipToS3,
 } from '../lib/clips'
-import { extractAudioRange } from '../lib/ffmpeg'
+import { extractAudioRange, probeMediaDuration } from '../lib/ffmpeg'
 import { exportClipFromSource } from '../lib/burnOverlays'
 import { REELS_FRAME } from '../lib/exportPresets'
 import { estimateTranscriptionCostUsd, formatPrecise, segmentsToVtt } from '../lib/format'
 import { getErrorMessage } from '../lib/errors'
-import { normalizeCaptionSegments } from '../lib/captions'
+import {
+  alignCaptionsToAudioDuration,
+  normalizeCaptionSegments,
+} from '../lib/captions'
 import type {
   CaptionSegment,
   ClipRow,
@@ -43,6 +46,18 @@ export function StudioPage() {
   const [progress, setProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const readySoundPlayed = useRef(false)
+
+  useEffect(() => {
+    if (step !== 'export' || !savedClip) {
+      readySoundPlayed.current = false
+      return
+    }
+    if (readySoundPlayed.current) return
+    readySoundPlayed.current = true
+    playReadyChime()
+  }, [step, savedClip])
 
   const watermark = useMemo(
     () =>
@@ -107,14 +122,20 @@ export function StudioPage() {
     setError(null)
     setProgress('Extraindo áudio do trecho…')
     try {
-      // Só áudio do intervalo — sem reencodar o vídeo (muito mais rápido no celular)
       const audio = await extractAudioRange(file, start, end)
-      const actualDuration = clipDuration
+      const expectedDuration = clipDuration
+      const audioDuration =
+        (await probeMediaDuration(audio)) || expectedDuration
 
       setProgress('Gerando legendas…')
-      const result = await transcribeAudio(audio, actualDuration)
+      const result = await transcribeAudio(audio, expectedDuration)
 
-      setCaptions(normalizeCaptionSegments(result.segments, actualDuration))
+      const aligned = alignCaptionsToAudioDuration(
+        result.segments,
+        expectedDuration,
+        audioDuration,
+      )
+      setCaptions(normalizeCaptionSegments(aligned, expectedDuration))
       setCostUsd(result.estimated_cost_usd)
       setStep('captions')
     } catch (err) {
@@ -190,6 +211,31 @@ export function StudioPage() {
     } finally {
       setBusy(false)
       setProgress(null)
+    }
+  }
+
+  const downloadSaved = async () => {
+    const mediaUrl = savedClip ? resolveClipMediaUrl(savedClip) : null
+    if (!savedClip || !mediaUrl) return
+    setDownloading(true)
+    setError(null)
+    try {
+      const res = await fetch(mediaUrl)
+      if (!res.ok) throw new Error(`Falha ao baixar (${res.status})`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const ext = blob.type.includes('webm') || mediaUrl.includes('.webm') ? 'webm' : 'mp4'
+      a.download = `${sanitizeFilename(savedClip.title)}.${ext}`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao baixar o vídeo')
+    } finally {
+      setDownloading(false)
     }
   }
 
@@ -290,7 +336,7 @@ export function StudioPage() {
           />
 
           <Section title="Formato de exportação">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Formato de exportação">
               <Choice
                 active={exportPreset === 'reels'}
                 onClick={() => setExportPreset('reels')}
@@ -319,7 +365,8 @@ export function StudioPage() {
               placeholder="@seuusuario"
               className="field"
             />
-            <div className="mt-2 grid grid-cols-2 gap-2">
+            <p className="mb-2 mt-3 text-xs font-medium text-muted">Posição</p>
+            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Posição da marca d'água">
               <Choice
                 active={watermarkPosition === 'top'}
                 onClick={() => setWatermarkPosition('top')}
@@ -400,15 +447,27 @@ export function StudioPage() {
                 : 'Pronto para compartilhar.'}
             </p>
             {resolveClipMediaUrl(savedClip) ? (
-              <a
-                href={resolveClipMediaUrl(savedClip)!}
-                target="_blank"
-                rel="noreferrer"
-                className="press mt-4 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-paper"
-              >
-                <ExternalLink className="h-4 w-4" />
-                Assistir
-              </a>
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
+                <a
+                  href={resolveClipMediaUrl(savedClip)!}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="press inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-paper"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Assistir
+                </a>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="sm:min-w-[8.5rem]"
+                  loading={downloading}
+                  onClick={() => void downloadSaved()}
+                >
+                  <Download className="h-4 w-4" />
+                  Baixar
+                </Button>
+              </div>
             ) : null}
           </div>
           <SharePanel clip={savedClip} onUpdated={setSavedClip} />
@@ -503,17 +562,70 @@ function Choice({
   return (
     <button
       type="button"
+      role="radio"
+      aria-checked={active}
       onClick={onClick}
       className={
         active
-          ? 'rounded-2xl bg-white px-3 py-3 text-left text-paper'
-          : 'rounded-2xl border border-white/10 bg-mist px-3 py-3 text-left text-muted'
+          ? 'flex items-start gap-3 rounded-2xl border border-accent/50 bg-accent/10 px-3 py-3 text-left text-ink ring-1 ring-accent/30'
+          : 'flex items-start gap-3 rounded-2xl border border-white/10 bg-mist px-3 py-3 text-left text-muted hover:border-white/20'
       }
     >
-      <span className="block text-sm font-semibold">{title}</span>
-      {subtitle ? (
-        <span className="mt-0.5 block text-[11px] font-medium opacity-65">{subtitle}</span>
-      ) : null}
+      <span
+        className={
+          active
+            ? 'mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 border-accent bg-accent'
+            : 'mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 border-white/25 bg-transparent'
+        }
+        aria-hidden
+      >
+        {active ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold">{title}</span>
+        {subtitle ? (
+          <span className="mt-0.5 block text-[11px] font-medium opacity-65">{subtitle}</span>
+        ) : null}
+      </span>
     </button>
   )
+}
+
+function sanitizeFilename(name: string) {
+  const cleaned = name.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') || 'clip'
+  return cleaned.slice(0, 80)
+}
+
+/** Som curto de “pronto” via Web Audio (sem arquivo externo). */
+function playReadyChime() {
+  try {
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    if (!Ctx) return
+    const ctx = new Ctx()
+    const now = ctx.currentTime
+
+    const tone = (freq: number, t0: number, dur: number, gain = 0.08) => {
+      const osc = ctx.createOscillator()
+      const g = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.value = freq
+      g.gain.setValueAtTime(0.0001, t0)
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.02)
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur)
+      osc.connect(g)
+      g.connect(ctx.destination)
+      osc.start(t0)
+      osc.stop(t0 + dur + 0.02)
+    }
+
+    tone(523.25, now, 0.16, 0.07)
+    tone(659.25, now + 0.12, 0.18, 0.08)
+    tone(783.99, now + 0.26, 0.28, 0.06)
+
+    window.setTimeout(() => {
+      void ctx.close().catch(() => undefined)
+    }, 900)
+  } catch {
+    // ignore — alguns browsers bloqueiam sem gesto; o save já veio de um clique
+  }
 }

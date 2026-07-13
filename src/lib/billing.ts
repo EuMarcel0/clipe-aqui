@@ -1,6 +1,8 @@
 import { supabase } from './supabase'
 
 export const FREE_LIFETIME_CLIPS = 10
+/** Duração máxima do corte no plano free (ainda sem créditos pagos). */
+export const FREE_MAX_CLIP_SECONDS = 50
 
 export type BillingStatus = {
   free_limit: number
@@ -8,6 +10,8 @@ export type BillingStatus = {
   free_remaining: number
   credits: number
   can_create: boolean
+  /** Limite de duração do clip; null = sem limite (tem créditos). */
+  max_clip_seconds: number | null
 }
 
 export type CreditPackId = 'pack_10' | 'pack_20' | 'pack_50' | 'pack_100'
@@ -64,7 +68,21 @@ export async function getBillingStatus(): Promise<BillingStatus> {
     free_remaining: Number(row.free_remaining ?? 0),
     credits: Number(row.credits ?? 0),
     can_create: Boolean(row.can_create),
+    max_clip_seconds:
+      Number(row.credits ?? 0) > 0 ? null : FREE_MAX_CLIP_SECONDS,
   }
+}
+
+/** Garante que o intervalo respeita o teto free (50s). */
+export function clampRangeToMaxClip(
+  start: number,
+  end: number,
+  maxClipSeconds: number | null | undefined,
+): { start: number; end: number } {
+  if (!maxClipSeconds || maxClipSeconds <= 0) return { start, end }
+  const len = end - start
+  if (len <= maxClipSeconds + 0.001) return { start, end }
+  return { start, end: start + maxClipSeconds }
 }
 
 export async function startCreditCheckout(packId: CreditPackId) {

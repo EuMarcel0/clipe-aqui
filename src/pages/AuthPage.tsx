@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, Mail } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from '../components/Button'
+import { BrandLogo } from '../components/BrandLogo'
 import { isSupabaseConfigured } from '../lib/supabase'
 import { formatWhatsapp, isValidWhatsapp } from '../lib/phone'
 
@@ -16,6 +17,7 @@ export function AuthPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
+  const [pendingConfirmEmail, setPendingConfirmEmail] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
 
@@ -23,12 +25,14 @@ export function AuthPage() {
     setMode(next)
     setError(null)
     setInfo(null)
+    setPendingConfirmEmail(null)
   }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     setInfo(null)
+    setPendingConfirmEmail(null)
 
     if (mode === 'signup') {
       if (fullName.trim().length < 2) {
@@ -54,19 +58,20 @@ export function AuthPage() {
       if (mode === 'login') {
         await signIn(email, password)
       } else {
+        const signupEmail = email.trim()
         const { needsEmailConfirm } = await signUp({
-          email,
+          email: signupEmail,
           password,
           fullName,
           whatsapp,
         })
         if (needsEmailConfirm) {
-          setInfo(
-            'Conta criada. Confirme o e-mail para entrar — seu perfil já fica registrado.',
-          )
+          setPendingConfirmEmail(signupEmail)
           setMode('login')
           setPassword('')
           setConfirmPassword('')
+        } else {
+          setInfo('Conta criada. Você já pode usar o Clipe Aqui.')
         }
       }
     } catch (err) {
@@ -79,6 +84,7 @@ export function AuthPage() {
   const onGoogle = async () => {
     setError(null)
     setInfo(null)
+    setPendingConfirmEmail(null)
     setGoogleLoading(true)
     try {
       await signInWithGoogle('/criar')
@@ -104,17 +110,21 @@ export function AuthPage() {
         />
         <div className="relative">
           <Link to="/" className="mb-5 inline-flex items-center gap-2">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-accent font-display text-xs font-bold text-white">
-              CA
-            </span>
+            <BrandLogo className="h-8 w-8" decorative={false} />
           </Link>
           <p className="font-display text-4xl font-extrabold leading-[0.95] tracking-tight sm:text-5xl">
-            {mode === 'login' ? 'Bem-vindo de volta' : 'Crie sua conta'}
+            {pendingConfirmEmail
+              ? 'Confira seu e-mail'
+              : mode === 'login'
+                ? 'Bem-vindo de volta'
+                : 'Crie sua conta'}
           </p>
           <p className="mt-4 max-w-[20rem] text-[15px] leading-relaxed text-white/65">
-            {mode === 'login'
-              ? 'Entre para cortar, legendar e exportar seus Reels.'
-              : 'Cadastro rápido. WhatsApp ajuda a gente a te avisar quando precisar.'}
+            {pendingConfirmEmail
+              ? 'Enviamos um link de confirmação para ativar sua conta.'
+              : mode === 'login'
+                ? 'Entre para cortar, legendar e exportar seus Reels.'
+                : 'Cadastro rápido. WhatsApp ajuda a gente a te avisar quando precisar.'}
           </p>
         </div>
       </section>
@@ -125,121 +135,172 @@ export function AuthPage() {
         </p>
       ) : null}
 
-      <form
-        onSubmit={(e) => void submit(e)}
-        className="surface slide-up mt-5 space-y-3.5 rounded-3xl p-5"
-      >
-        <div className="flex gap-1 rounded-2xl bg-mist p-1">
-          <ModeButton active={mode === 'login'} onClick={() => switchMode('login')}>
-            Entrar
-          </ModeButton>
-          <ModeButton active={mode === 'signup'} onClick={() => switchMode('signup')}>
-            Criar conta
-          </ModeButton>
-        </div>
+      {pendingConfirmEmail ? (
+        <div className="surface slide-up mt-5 space-y-4 rounded-3xl p-5">
+          <div className="flex items-start gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-accent/15 text-accent">
+              <Mail className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="font-display text-lg font-bold tracking-tight">
+                Confirme seu e-mail para entrar
+              </p>
+              <p className="mt-1.5 text-sm leading-relaxed text-muted">
+                Enviamos um link para{' '}
+                <span className="font-semibold text-ink">{pendingConfirmEmail}</span>.
+                Abra a mensagem e toque em <strong className="text-ink">Confirmar e-mail</strong>.
+              </p>
+            </div>
+          </div>
 
-        <Button
-          type="button"
-          variant="ghost"
-          className="w-full"
-          loading={googleLoading}
-          onClick={() => void onGoogle()}
+          <ul className="space-y-2 rounded-2xl bg-mist px-4 py-3 text-sm text-muted">
+            <li>Olhe também a pasta de spam / promoções.</li>
+            <li>Depois de confirmar, volte aqui e entre com e-mail e senha.</li>
+          </ul>
+
+          <Button
+            type="button"
+            className="w-full"
+            onClick={() => {
+              const saved = pendingConfirmEmail
+              setPendingConfirmEmail(null)
+              setMode('login')
+              setEmail(saved)
+            }}
+          >
+            Já confirmei — entrar
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+
+          <button
+            type="button"
+            className="w-full text-center text-sm font-semibold text-muted hover:text-ink"
+            onClick={() => setPendingConfirmEmail(null)}
+          >
+            Usar outro e-mail
+          </button>
+        </div>
+      ) : (
+        <form
+          onSubmit={(e) => void submit(e)}
+          className="surface slide-up mt-5 space-y-3.5 rounded-3xl p-5"
         >
-          <GoogleIcon />
-          Continuar com Google
-        </Button>
+          <div className="flex gap-1 rounded-2xl bg-mist p-1">
+            <ModeButton active={mode === 'login'} onClick={() => switchMode('login')}>
+              Entrar
+            </ModeButton>
+            <ModeButton active={mode === 'signup'} onClick={() => switchMode('signup')}>
+              Criar conta
+            </ModeButton>
+          </div>
 
-        <div className="flex items-center gap-3">
-          <span className="h-px flex-1 bg-white/10" />
-          <span className="text-[11px] font-medium uppercase tracking-wider text-muted">
-            ou
-          </span>
-          <span className="h-px flex-1 bg-white/10" />
-        </div>
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full"
+            loading={googleLoading}
+            onClick={() => void onGoogle()}
+          >
+            <GoogleIcon />
+            Continuar com Google
+          </Button>
 
-        {mode === 'signup' ? (
-          <>
-            <Field label="Nome completo">
-              <input
-                required
-                autoComplete="name"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                className="field mt-1.5"
-                placeholder="Seu nome"
-              />
-            </Field>
+          <div className="flex items-center gap-3">
+            <span className="h-px flex-1 bg-white/10" />
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted">
+              ou
+            </span>
+            <span className="h-px flex-1 bg-white/10" />
+          </div>
 
-            <Field label="WhatsApp">
-              <input
-                required
-                type="tel"
-                inputMode="numeric"
-                autoComplete="tel"
-                value={whatsapp}
-                onChange={(e) => setWhatsapp(formatWhatsapp(e.target.value))}
-                className="field mt-1.5"
-                placeholder="(11) 99999-9999"
-              />
-            </Field>
-          </>
-        ) : null}
+          {mode === 'signup' ? (
+            <>
+              <Field label="Nome completo">
+                <input
+                  required
+                  autoComplete="name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="field mt-1.5"
+                  placeholder="Seu nome"
+                />
+              </Field>
 
-        <Field label="E-mail">
-          <input
-            required
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="field mt-1.5"
-            placeholder="voce@email.com"
-          />
-        </Field>
+              <Field label="WhatsApp">
+                <input
+                  required
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  value={whatsapp}
+                  onChange={(e) => setWhatsapp(formatWhatsapp(e.target.value))}
+                  className="field mt-1.5"
+                  placeholder="(11) 99999-9999"
+                />
+              </Field>
+            </>
+          ) : null}
 
-        <Field label="Senha">
-          <input
-            required
-            minLength={6}
-            type="password"
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="field mt-1.5"
-            placeholder="mín. 6 caracteres"
-          />
-        </Field>
+          <Field label="E-mail">
+            <input
+              required
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="field mt-1.5"
+              placeholder="voce@email.com"
+            />
+          </Field>
 
-        {mode === 'signup' ? (
-          <Field label="Confirmar senha">
+          <Field label="Senha">
             <input
               required
               minLength={6}
               type="password"
-              autoComplete="new-password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               className="field mt-1.5"
-              placeholder="repita a senha"
+              placeholder="mín. 6 caracteres"
             />
           </Field>
-        ) : null}
 
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
-        {info ? <p className="text-sm text-accent">{info}</p> : null}
+          {mode === 'signup' ? (
+            <Field label="Confirmar senha">
+              <input
+                required
+                minLength={6}
+                type="password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="field mt-1.5"
+                placeholder="repita a senha"
+              />
+            </Field>
+          ) : null}
 
-        <Button type="submit" className="w-full" loading={loading}>
-          {mode === 'login' ? 'Entrar' : 'Criar conta'}
-          <ArrowRight className="h-4 w-4" />
-        </Button>
+          {error ? <p className="text-sm text-danger">{error}</p> : null}
+          {info ? (
+            <p className="rounded-2xl border border-accent/25 bg-accent/10 px-3 py-2.5 text-sm text-ink">
+              {info}
+            </p>
+          ) : null}
 
-        {mode === 'signup' ? (
-          <p className="text-center text-[11px] leading-relaxed text-muted">
-            Ao criar a conta, você concorda em usar o Clipe Aqui para editar e exportar seus
-            próprios vídeos.
-          </p>
-        ) : null}
-      </form>
+          <Button type="submit" className="w-full" loading={loading}>
+            {mode === 'login' ? 'Entrar' : 'Criar conta'}
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+
+          {mode === 'signup' ? (
+            <p className="text-center text-[11px] leading-relaxed text-muted">
+              Ao criar a conta, você concorda em usar o Clipe Aqui para editar e exportar seus
+              próprios vídeos.
+            </p>
+          ) : null}
+        </form>
+      )}
 
       <p className="mt-6 text-center text-xs text-muted">
         <Link className="font-semibold text-white/80 underline-offset-2 hover:underline" to="/">

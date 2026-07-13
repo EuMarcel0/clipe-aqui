@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getClipByShareToken, resolveClipMediaUrl } from '../lib/clips'
+import { BrandLogo } from '../components/BrandLogo'
 import { ClipPlayer } from '../components/ClipPlayer'
 import type { ClipRow } from '../types'
 
@@ -72,9 +73,7 @@ function ShareChrome({ children }: { children: React.ReactNode }) {
     <div className="mx-auto flex min-h-dvh max-w-lg flex-col px-4 pb-6 pt-4 sm:max-w-xl">
       <header className="mb-5">
         <Link to="/" className="inline-flex items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-accent text-white">
-            <span className="font-display text-sm font-bold tracking-tight">CA</span>
-          </span>
+          <BrandLogo className="h-9 w-9" />
           <p className="font-display text-lg font-bold tracking-tight text-ink">Clipe Aqui</p>
         </Link>
       </header>

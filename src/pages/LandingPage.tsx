@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { BrandLogo } from '../components/BrandLogo'
 import { HeroReelCanvas } from '../components/HeroReelCanvas'
 
 export function LandingPage() {
@@ -58,7 +59,7 @@ export function LandingPage() {
           }`}
         >
           <Link to="/" className="flex items-center gap-2.5">
-            <BrandMark />
+            <BrandLogo className="h-9 w-9" />
             <span className="font-display text-lg font-bold tracking-tight sm:text-xl">
               Clipe Aqui
             </span>
@@ -170,7 +171,7 @@ export function LandingPage() {
       <footer className="border-t border-white/6 px-5 py-8 sm:px-8">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
-            <BrandMark small />
+            <BrandLogo className="h-7 w-7" />
             <span className="font-display text-sm font-bold">Clipe Aqui</span>
           </div>
           <p className="text-xs text-muted">Corte · legende · compartilhe</p>
@@ -180,13 +181,3 @@ export function LandingPage() {
   )
 }
 
-function BrandMark({ small }: { small?: boolean }) {
-  const size = small ? 'h-7 w-7 text-[10px]' : 'h-9 w-9 text-sm'
-  return (
-    <span
-      className={`grid ${size} place-items-center rounded-xl bg-accent font-display font-bold text-white`}
-    >
-      CA
-    </span>
-  )
-}

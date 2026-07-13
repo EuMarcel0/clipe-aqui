@@ -1,18 +1,31 @@
+import { useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { FolderOpen, LogOut, Plus, Wallet } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuth } from '../hooks/useAuth'
+import { BrandLogo } from './BrandLogo'
+import { ConfirmDialog } from './ConfirmDialog'
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, signOut } = useAuth()
+  const [logoutOpen, setLogoutOpen] = useState(false)
+  const [logoutLoading, setLogoutLoading] = useState(false)
+
+  const confirmLogout = async () => {
+    setLogoutLoading(true)
+    try {
+      await signOut()
+      setLogoutOpen(false)
+    } finally {
+      setLogoutLoading(false)
+    }
+  }
 
   return (
     <div className="relative mx-auto flex min-h-dvh max-w-lg flex-col px-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-4 sm:max-w-xl">
       <header className="mb-5 flex items-center justify-between gap-3">
         <Link to="/criar" className="group flex items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-accent text-white transition group-hover:scale-[1.03]">
-            <span className="font-display text-sm font-bold tracking-tight">CA</span>
-          </span>
+          <BrandLogo className="h-9 w-9 transition group-hover:scale-[1.03]" />
           <p className="font-display text-lg font-bold tracking-tight text-ink">Clipe Aqui</p>
         </Link>
 
@@ -27,7 +40,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
             <button
               type="button"
-              onClick={() => void signOut()}
+              onClick={() => setLogoutOpen(true)}
               className="press inline-flex h-9 items-center gap-1.5 rounded-full border border-white/10 bg-lift px-3 text-xs font-semibold text-muted"
             >
               <LogOut className="h-3.5 w-3.5" />
@@ -51,6 +64,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </nav>
       ) : null}
+
+      <ConfirmDialog
+        open={logoutOpen}
+        title="Sair da conta?"
+        description="Você precisará entrar de novo para criar ou ver seus clips."
+        confirmLabel="Sair"
+        cancelLabel="Cancelar"
+        danger
+        loading={logoutLoading}
+        onCancel={() => {
+          if (!logoutLoading) setLogoutOpen(false)
+        }}
+        onConfirm={() => void confirmLogout()}
+      />
     </div>
   )
 }

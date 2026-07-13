@@ -22,6 +22,8 @@ import {
   normalizeCaptionSegments,
 } from '../lib/captions'
 import {
+  FREE_MAX_CLIP_SECONDS,
+  clampRangeToMaxClip,
   getBillingStatus,
   isQuotaExceededError,
   type BillingStatus,
@@ -91,6 +93,8 @@ export function StudioPage() {
   )
 
   const clipDuration = Math.max(0, end - start)
+  const maxClipSeconds =
+    billing && billing.credits > 0 ? null : (billing?.max_clip_seconds ?? FREE_MAX_CLIP_SECONDS)
 
   const onPickFile = (next: File | null) => {
     if (objectUrl) URL.revokeObjectURL(objectUrl)
@@ -114,9 +118,10 @@ export function StudioPage() {
     video.src = url
     video.onloadedmetadata = () => {
       const d = video.duration || 0
+      const initialMax = maxClipSeconds ?? FREE_MAX_CLIP_SECONDS
       setDuration(d)
       setStart(0)
-      setEnd(Math.min(d, 30))
+      setEnd(Math.min(d, initialMax))
       setFile(next)
       setObjectUrl(url)
       setTitle(next.name.replace(/\.[^.]+$/, ''))
@@ -124,12 +129,25 @@ export function StudioPage() {
     }
   }
 
-  const onChangeRange = useCallback((s: number, e: number) => {
-    setStart(s)
-    setEnd(e)
-    setCaptions([])
-    setCostUsd(null)
-  }, [])
+  const onChangeRange = useCallback(
+    (s: number, e: number) => {
+      const capped = clampRangeToMaxClip(s, e, maxClipSeconds)
+      setStart(capped.start)
+      setEnd(capped.end)
+      setCaptions([])
+      setCostUsd(null)
+    },
+    [maxClipSeconds],
+  )
+
+  // Se o billing carregar depois e o usuário for free, corta seleção > 50s
+  useEffect(() => {
+    if (!maxClipSeconds || !file) return
+    setEnd((prevEnd) => {
+      const capped = clampRangeToMaxClip(start, prevEnd, maxClipSeconds)
+      return capped.end
+    })
+  }, [maxClipSeconds, file, start])
 
   const updateCaptionText = (index: number, text: string) => {
     setCaptions((prev) => prev.map((c, i) => (i === index ? { ...c, text } : c)))
@@ -142,6 +160,10 @@ export function StudioPage() {
       setError(
         'Limite grátis de 10 clips atingido. Compre créditos para gerar legendas e salvar.',
       )
+      return
+    }
+    if (maxClipSeconds && clipDuration > maxClipSeconds + 0.05) {
+      setError(`No plano free o corte máximo é de ${maxClipSeconds} segundos.`)
       return
     }
     setBusy(true)
@@ -181,6 +203,10 @@ export function StudioPage() {
     if (quotaBlocked || (billing && !billing.can_create)) {
       setQuotaBlocked(true)
       setError('Limite grátis de 10 clips atingido. Compre créditos para continuar.')
+      return
+    }
+    if (maxClipSeconds && clipDuration > maxClipSeconds + 0.05) {
+      setError(`No plano free o corte máximo é de ${maxClipSeconds} segundos.`)
       return
     }
     setBusy(true)
@@ -374,7 +400,14 @@ export function StudioPage() {
             onChangeRange={onChangeRange}
             captions={captions}
             watermark={watermark}
+            maxClipSeconds={maxClipSeconds}
           />
+
+          {maxClipSeconds ? (
+            <p className="text-xs text-muted">
+              Plano free: corte máximo de {maxClipSeconds}s. Com créditos, o limite some.
+            </p>
+          ) : null}
 
           <Section title="Formato de exportação">
             <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Formato de exportação">

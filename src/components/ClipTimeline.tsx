@@ -11,6 +11,8 @@ type Props = {
   current: number
   onChangeRange: (start: number, end: number) => void
   onSeek: (time: number) => void
+  /** Teto do corte (ex.: 50s no free). */
+  maxClipSeconds?: number | null
 }
 
 const MIN_CLIP = 0.2
@@ -24,6 +26,7 @@ export function ClipTimeline({
   current,
   onChangeRange,
   onSeek,
+  maxClipSeconds = null,
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null)
   const dragMode = useRef<DragMode>(null)
@@ -32,6 +35,7 @@ export function ClipTimeline({
   const [dragging, setDragging] = useState<DragMode>(null)
 
   const max = duration > 0 ? duration : Math.max(end, start + 1, 1)
+  const maxLen = maxClipSeconds && maxClipSeconds > 0 ? maxClipSeconds : null
 
   const toRatio = useCallback((time: number) => clamp(time / max, 0, 1), [max])
   const toTime = useCallback(
@@ -96,11 +100,13 @@ export function ClipTimeline({
       const time = toTime(e.clientX)
 
       if (mode === 'start') {
-        const next = clamp(time, 0, end - MIN_CLIP)
+        const minStart = maxLen ? Math.max(0, end - maxLen) : 0
+        const next = clamp(time, minStart, end - MIN_CLIP)
         onChangeRange(next, end)
         onSeek(next)
       } else if (mode === 'end') {
-        const next = clamp(time, start + MIN_CLIP, max)
+        const maxEnd = maxLen ? Math.min(max, start + maxLen) : max
+        const next = clamp(time, start + MIN_CLIP, maxEnd)
         onChangeRange(start, next)
         onSeek(Math.max(start, next - 0.05))
       } else if (mode === 'playhead') {
@@ -110,7 +116,8 @@ export function ClipTimeline({
         if (!el) return
         const dx = e.clientX - dragOrigin.current.x
         const dt = (dx / el.getBoundingClientRect().width) * max
-        const clipLen = dragOrigin.current.end - dragOrigin.current.start
+        let clipLen = dragOrigin.current.end - dragOrigin.current.start
+        if (maxLen) clipLen = Math.min(clipLen, maxLen)
         let nextStart = dragOrigin.current.start + dt
         nextStart = clamp(nextStart, 0, max - clipLen)
         onChangeRange(nextStart, nextStart + clipLen)
@@ -131,7 +138,7 @@ export function ClipTimeline({
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
     }
-  }, [end, max, onChangeRange, onSeek, start, toTime])
+  }, [end, max, maxLen, onChangeRange, onSeek, start, toTime])
 
   const beginDrag = (mode: DragMode, e: React.PointerEvent) => {
     e.preventDefault()
@@ -148,11 +155,13 @@ export function ClipTimeline({
     if (time < start || time > end) {
       // clique fora da seleção: move o handle mais próximo
       if (Math.abs(time - start) <= Math.abs(time - end)) {
-        const next = clamp(time, 0, end - MIN_CLIP)
+        const minStart = maxLen ? Math.max(0, end - maxLen) : 0
+        const next = clamp(time, minStart, end - MIN_CLIP)
         onChangeRange(next, end)
         onSeek(next)
       } else {
-        const next = clamp(time, start + MIN_CLIP, max)
+        const maxEnd = maxLen ? Math.min(max, start + maxLen) : max
+        const next = clamp(time, start + MIN_CLIP, maxEnd)
         onChangeRange(start, next)
         onSeek(Math.max(start, next - 0.05))
       }
@@ -172,7 +181,10 @@ export function ClipTimeline({
         <span>
           IN {formatPrecise(start)} · OUT {formatPrecise(end)}
         </span>
-        <span className="text-accent">{formatPrecise(Math.max(0, end - start))}</span>
+          <span className="text-accent">{formatPrecise(Math.max(0, end - start))}</span>
+          {maxLen ? (
+            <span className="text-white/40"> · máx. {formatPrecise(maxLen)}</span>
+          ) : null}
       </div>
 
       {/* Régua */}

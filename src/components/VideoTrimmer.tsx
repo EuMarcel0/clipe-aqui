@@ -15,6 +15,7 @@ type Props = {
   onChangeRange: (start: number, end: number) => void
   captions?: CaptionSegment[]
   watermark?: WatermarkConfig | null
+  maxClipSeconds?: number | null
 }
 
 export function VideoTrimmer({
@@ -25,6 +26,7 @@ export function VideoTrimmer({
   onChangeRange,
   captions = [],
   watermark = null,
+  maxClipSeconds = null,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const rangeRef = useRef({ start, end })
@@ -153,6 +155,7 @@ export function VideoTrimmer({
           current={current}
           onChangeRange={onChangeRange}
           onSeek={seekTo}
+          maxClipSeconds={maxClipSeconds}
         />
       </div>
     </div>

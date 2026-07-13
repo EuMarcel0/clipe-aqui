@@ -17,9 +17,15 @@ export function resolveClipMediaUrl(clip: Pick<ClipRow, 's3_url' | 's3_key'>) {
 }
 
 export async function listMyClips() {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) throw new Error('Faça login para ver seus projetos')
+
   const { data, error } = await supabase
     .from('clips')
     .select('*')
+    .eq('user_id', user.id)
     .order('created_at', { ascending: false })
 
   if (error) throw error
@@ -27,15 +33,13 @@ export async function listMyClips() {
 }
 
 export async function getClipByShareToken(token: string) {
-  const { data, error } = await supabase
-    .from('clips')
-    .select('*')
-    .eq('share_token', token)
-    .eq('is_public', true)
-    .maybeSingle()
+  const { data, error } = await supabase.rpc('get_public_clip_by_token', {
+    p_token: token,
+  })
 
   if (error) throw error
-  return data as ClipRow | null
+  const rows = (data ?? []) as ClipRow[]
+  return rows[0] ?? null
 }
 
 export async function createClipDraft(input: {
@@ -62,6 +66,11 @@ export async function createClipDraft(input: {
     if (/QUOTA_EXCEEDED/i.test(error.message) || error.code === 'P0001') {
       throw new Error(
         'Limite grátis de 10 clips atingido. Compre créditos para continuar.',
+      )
+    }
+    if (/FREE_CLIP_TOO_LONG/i.test(error.message)) {
+      throw new Error(
+        'No plano free o corte máximo é de 50 segundos. Compre créditos para clips maiores.',
       )
     }
     throw error

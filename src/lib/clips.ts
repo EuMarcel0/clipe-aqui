@@ -50,21 +50,22 @@ export async function createClipDraft(input: {
   } = await supabase.auth.getUser()
   if (!user) throw new Error('Faça login para salvar clips')
 
-  const { data, error } = await supabase
-    .from('clips')
-    .insert({
-      user_id: user.id,
-      title: input.title,
-      source_filename: input.source_filename,
-      duration_seconds: input.duration_seconds,
-      start_seconds: input.start_seconds,
-      end_seconds: input.end_seconds,
-      status: 'processing',
-    })
-    .select('*')
-    .single()
+  const { data, error } = await supabase.rpc('create_clip_with_quota', {
+    p_title: input.title,
+    p_source_filename: input.source_filename,
+    p_duration_seconds: input.duration_seconds,
+    p_start_seconds: input.start_seconds,
+    p_end_seconds: input.end_seconds,
+  })
 
-  if (error) throw error
+  if (error) {
+    if (/QUOTA_EXCEEDED/i.test(error.message) || error.code === 'P0001') {
+      throw new Error(
+        'Limite grátis de 10 clips atingido. Compre créditos para continuar.',
+      )
+    }
+    throw error
+  }
   return data as ClipRow
 }
 

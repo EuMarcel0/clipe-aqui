@@ -7,6 +7,7 @@ import { LandingPage } from './pages/LandingPage'
 import { StudioPage } from './pages/StudioPage'
 import { LibraryPage } from './pages/LibraryPage'
 import { SharePage } from './pages/SharePage'
+import { BillingPage } from './pages/BillingPage'
 
 function Protected({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -72,6 +73,14 @@ export default function App() {
               element={
                 <Protected>
                   <LibraryPage />
+                </Protected>
+              }
+            />
+            <Route
+              path="/planos"
+              element={
+                <Protected>
+                  <BillingPage />
                 </Protected>
               }
             />

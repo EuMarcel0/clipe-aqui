@@ -1,5 +1,5 @@
 import { Link, NavLink } from 'react-router-dom'
-import { FolderOpen, LogOut, Plus } from 'lucide-react'
+import { FolderOpen, LogOut, Plus, Wallet } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuth } from '../hooks/useAuth'
 
@@ -17,14 +17,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
 
         {user ? (
-          <button
-            type="button"
-            onClick={() => void signOut()}
-            className="press inline-flex h-9 items-center gap-1.5 rounded-full border border-white/10 bg-lift px-3 text-xs font-semibold text-muted"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            Sair
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/planos"
+              className="press inline-flex h-9 items-center gap-1.5 rounded-full border border-white/10 bg-lift px-3 text-xs font-semibold text-muted"
+            >
+              <Wallet className="h-3.5 w-3.5" />
+              Créditos
+            </Link>
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className="press inline-flex h-9 items-center gap-1.5 rounded-full border border-white/10 bg-lift px-3 text-xs font-semibold text-muted"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Sair
+            </button>
+          </div>
         ) : null}
       </header>
 

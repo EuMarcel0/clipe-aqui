@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Captions, CheckCircle2, Download, ExternalLink, Plus, Upload } from 'lucide-react'
 import { VideoTrimmer } from '../components/VideoTrimmer'
 import { Button } from '../components/Button'
@@ -14,12 +15,17 @@ import {
 import { extractAudioRange, probeMediaDuration } from '../lib/ffmpeg'
 import { exportClipFromSource } from '../lib/burnOverlays'
 import { REELS_FRAME } from '../lib/exportPresets'
-import { estimateTranscriptionCostUsd, formatPrecise, segmentsToVtt } from '../lib/format'
+import { formatPrecise, segmentsToVtt } from '../lib/format'
 import { getErrorMessage } from '../lib/errors'
 import {
   alignCaptionsToAudioDuration,
   normalizeCaptionSegments,
 } from '../lib/captions'
+import {
+  getBillingStatus,
+  isQuotaExceededError,
+  type BillingStatus,
+} from '../lib/billing'
 import type {
   CaptionSegment,
   ClipRow,
@@ -47,7 +53,23 @@ export function StudioPage() {
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [billing, setBilling] = useState<BillingStatus | null>(null)
+  const [quotaBlocked, setQuotaBlocked] = useState(false)
   const readySoundPlayed = useRef(false)
+
+  const refreshBilling = useCallback(async () => {
+    try {
+      const status = await getBillingStatus()
+      setBilling(status)
+      setQuotaBlocked(!status.can_create)
+    } catch {
+      // billing ainda não migrado / offline — não bloqueia por falha de leitura
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshBilling()
+  }, [refreshBilling])
 
   useEffect(() => {
     if (step !== 'export' || !savedClip) {
@@ -57,7 +79,8 @@ export function StudioPage() {
     if (readySoundPlayed.current) return
     readySoundPlayed.current = true
     playReadyChime()
-  }, [step, savedClip])
+    void refreshBilling()
+  }, [step, savedClip, refreshBilling])
 
   const watermark = useMemo(
     () =>
@@ -68,10 +91,6 @@ export function StudioPage() {
   )
 
   const clipDuration = Math.max(0, end - start)
-  const estimatedCost = useMemo(
-    () => estimateTranscriptionCostUsd(clipDuration),
-    [clipDuration],
-  )
 
   const onPickFile = (next: File | null) => {
     if (objectUrl) URL.revokeObjectURL(objectUrl)
@@ -148,19 +167,16 @@ export function StudioPage() {
 
   const saveToS3 = async () => {
     if (!file) return
+    if (quotaBlocked || (billing && !billing.can_create)) {
+      setQuotaBlocked(true)
+      setError('Limite grátis de 10 clips atingido. Compre créditos para continuar.')
+      return
+    }
     setBusy(true)
     setError(null)
     setProgress('Preparando seu clip…')
     try {
-      const draft = await createClipDraft({
-        title: title || 'Clip sem título',
-        source_filename: file.name,
-        duration_seconds: duration,
-        start_seconds: start,
-        end_seconds: end,
-      })
-
-      // Uma passagem no arquivo original (evita Timeout loadeddata no WebM cortado)
+      // Exporta antes de consumir a cota — evita gastar create se a gravação falhar
       const blob = await exportClipFromSource(file, start, end, {
         preset: exportPreset,
         captions,
@@ -169,9 +185,18 @@ export function StudioPage() {
           if (r < 0.95) {
             setProgress(`Gravando no vídeo… ${Math.round(r * 100)}%`)
           } else {
-            setProgress('Enviando…')
+            setProgress('Salvando…')
           }
         },
+      })
+
+      setProgress('Registrando clip…')
+      const draft = await createClipDraft({
+        title: title || 'Clip sem título',
+        source_filename: file.name,
+        duration_seconds: duration,
+        start_seconds: start,
+        end_seconds: end,
       })
 
       setProgress('Enviando clip…')
@@ -205,8 +230,13 @@ export function StudioPage() {
 
       setSavedClip(ready)
       setStep('export')
+      void refreshBilling()
     } catch (err) {
       console.error('Erro ao salvar clip:', err)
+      if (isQuotaExceededError(err)) {
+        setQuotaBlocked(true)
+        void refreshBilling()
+      }
       setError(getErrorMessage(err, 'Não foi possível salvar seu clip. Tente novamente.'))
     } finally {
       setBusy(false)
@@ -382,14 +412,8 @@ export function StudioPage() {
 
           <Section title="Legendas">
             <p className="mb-3 text-sm text-muted">
-              IA no trecho selecionado · ~US$ {estimatedCost.toFixed(4)}
+              Gere legendas com IA no trecho selecionado ({formatPrecise(clipDuration)}).
             </p>
-
-            {costUsd != null ? (
-              <p className="mb-3 rounded-xl bg-accent/8 px-3 py-2 text-sm font-medium text-accent-deep">
-                Gerado · US$ {costUsd.toFixed(4)}
-              </p>
-            ) : null}
 
             {captions.length > 0 ? (
               <div className="mb-3 space-y-2">
@@ -413,6 +437,35 @@ export function StudioPage() {
               </div>
             ) : null}
 
+            {quotaBlocked ? (
+              <div className="mb-3 rounded-2xl border border-accent/30 bg-accent/10 px-4 py-3">
+                <p className="text-sm font-semibold text-ink">
+                  Você usou seus 10 clips grátis
+                </p>
+                <p className="mt-1 text-sm text-muted">
+                  Compre créditos para salvar novos clips. 1 crédito = 1 clip.
+                </p>
+                <Link
+                  to="/planos"
+                  className="press mt-3 inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white"
+                >
+                  Ver créditos
+                </Link>
+              </div>
+            ) : billing && billing.free_remaining > 0 ? (
+              <p className="mb-3 text-xs text-muted">
+                {billing.free_remaining} clip
+                {billing.free_remaining === 1 ? '' : 's'} grátis restante
+                {billing.free_remaining === 1 ? '' : 's'}
+                {billing.credits > 0 ? ` · ${billing.credits} crédito(s)` : ''}
+              </p>
+            ) : billing && billing.credits > 0 ? (
+              <p className="mb-3 text-xs text-muted">
+                {billing.credits} crédito{billing.credits === 1 ? '' : 's'} disponível
+                {billing.credits === 1 ? '' : 's'}
+              </p>
+            ) : null}
+
             <div className="grid gap-2 sm:grid-cols-2">
               <Button
                 type="button"
@@ -423,7 +476,12 @@ export function StudioPage() {
                 <Captions className="h-4 w-4" />
                 {captions.length ? 'Regenerar' : 'Gerar legendas'}
               </Button>
-              <Button type="button" loading={busy} onClick={() => void saveToS3()}>
+              <Button
+                type="button"
+                loading={busy}
+                disabled={quotaBlocked}
+                onClick={() => void saveToS3()}
+              >
                 Salvar clip
               </Button>
             </div>

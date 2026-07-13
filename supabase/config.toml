@@ -9,3 +9,9 @@ verify_jwt = true
 
 [functions.get-upload-url]
 verify_jwt = true
+
+[functions.create-checkout]
+verify_jwt = true
+
+[functions.stripe-webhook]
+verify_jwt = false

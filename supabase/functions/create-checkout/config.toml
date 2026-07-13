@@ -1,0 +1,4 @@
+{
+  "name": "create-checkout",
+  "verify_jwt": true
+}

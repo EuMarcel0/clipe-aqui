@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { Button } from './Button'
 
 type Props = {
@@ -43,8 +44,8 @@ export function ConfirmDialog({
 
   if (!open) return null
 
-  return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
       <button
         type="button"
         aria-label="Fechar"
@@ -89,6 +90,7 @@ export function ConfirmDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

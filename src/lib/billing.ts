@@ -3,6 +3,9 @@ import { supabase } from './supabase'
 export const FREE_LIFETIME_CLIPS = 10
 /** Duração máxima do corte no plano free (ainda sem créditos pagos). */
 export const FREE_MAX_CLIP_SECONDS = 50
+/** Tamanho máximo do arquivo de vídeo no plano free (sem créditos pagos). */
+export const FREE_MAX_FILE_MB = 30
+export const FREE_MAX_FILE_BYTES = FREE_MAX_FILE_MB * 1024 * 1024
 
 export type BillingStatus = {
   free_limit: number

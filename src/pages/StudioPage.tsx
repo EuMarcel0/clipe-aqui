@@ -25,6 +25,8 @@ import {
 } from '../lib/captions'
 import {
   FREE_MAX_CLIP_SECONDS,
+  FREE_MAX_FILE_BYTES,
+  FREE_MAX_FILE_MB,
   clampRangeToMaxClip,
   getBillingStatus,
   isQuotaExceededError,
@@ -118,6 +120,8 @@ export function StudioPage() {
   const clipDuration = Math.max(0, end - start)
   const maxClipSeconds =
     billing && billing.credits > 0 ? null : (billing?.max_clip_seconds ?? FREE_MAX_CLIP_SECONDS)
+  const maxFileBytes =
+    billing && billing.credits > 0 ? null : FREE_MAX_FILE_BYTES
 
   const onPickFile = (next: File | null) => {
     if (objectUrl) URL.revokeObjectURL(objectUrl)
@@ -134,6 +138,16 @@ export function StudioPage() {
       setFile(null)
       setObjectUrl(null)
       setStep('upload')
+      return
+    }
+
+    if (maxFileBytes && next.size > maxFileBytes) {
+      setFile(null)
+      setObjectUrl(null)
+      setStep('upload')
+      setError(
+        `No plano free o arquivo máximo é de ${FREE_MAX_FILE_MB} MB. Compre créditos para vídeos maiores.`,
+      )
       return
     }
 
@@ -414,12 +428,22 @@ export function StudioPage() {
                 {dragOver ? 'Solte o vídeo aqui' : 'Escolher vídeo'}
               </p>
               <p className="mt-1 text-sm text-muted">Arraste e solte ou toque · MP4, MOV ou WebM</p>
+              {maxFileBytes ? (
+                <p className="mt-2 text-xs text-muted">
+                  Plano free: arquivo até {FREE_MAX_FILE_MB} MB · corte máximo de{' '}
+                  {maxClipSeconds ?? FREE_MAX_CLIP_SECONDS}s. Com créditos, o limite some.
+                </p>
+              ) : null}
             </div>
             <input
               type="file"
               accept="video/*"
               className="hidden"
-              onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                const picked = e.target.files?.[0] ?? null
+                onPickFile(picked)
+                e.target.value = ''
+              }}
             />
           </label>
         </div>
@@ -463,9 +487,13 @@ export function StudioPage() {
             maxClipSeconds={maxClipSeconds}
           />
 
-          {maxClipSeconds ? (
+          {maxClipSeconds || maxFileBytes ? (
             <p className="text-xs text-muted">
-              Plano free: corte máximo de {maxClipSeconds}s. Com créditos, o limite some.
+              Plano free:
+              {maxFileBytes ? ` arquivo até ${FREE_MAX_FILE_MB} MB` : ''}
+              {maxFileBytes && maxClipSeconds ? ' · ' : ''}
+              {maxClipSeconds ? `corte máximo de ${maxClipSeconds}s` : ''}. Com
+              créditos, o limite some.
             </p>
           ) : null}
 

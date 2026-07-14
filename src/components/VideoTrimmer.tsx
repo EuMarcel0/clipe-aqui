@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pause, Play } from 'lucide-react'
-import type { CaptionSegment } from '../types'
+import type { CaptionLook, CaptionSegment, WatermarkConfig } from '../types'
+import { DEFAULT_CAPTION_LOOK } from '../types'
 import { clamp, formatPrecise } from '../lib/format'
 import { getActiveCaptionAt } from '../lib/captions'
 import { Button } from './Button'
 import { ClipTimeline } from './ClipTimeline'
-import type { WatermarkConfig } from '../types'
 
 type Props = {
   src: string
@@ -14,6 +14,7 @@ type Props = {
   duration?: number
   onChangeRange: (start: number, end: number) => void
   captions?: CaptionSegment[]
+  captionLook?: CaptionLook
   watermark?: WatermarkConfig | null
   maxClipSeconds?: number | null
 }
@@ -25,6 +26,7 @@ export function VideoTrimmer({
   duration: durationProp = 0,
   onChangeRange,
   captions = [],
+  captionLook = DEFAULT_CAPTION_LOOK,
   watermark = null,
   maxClipSeconds = null,
 }: Props) {
@@ -151,10 +153,16 @@ export function VideoTrimmer({
         ) : null}
         {activeCaption ? (
           <div
-            className={`pointer-events-none absolute inset-x-3 rounded-xl bg-black/65 px-3 py-2 text-center text-sm font-semibold leading-snug text-white ${
-              watermark?.text.trim() && watermark.position === 'bottom'
-                ? 'bottom-12'
-                : 'bottom-4'
+            className={`pointer-events-none absolute left-1/2 w-[92%] max-w-full -translate-x-1/2 px-3 py-2 text-center text-sm font-semibold leading-snug sm:text-base ${
+              captionLook.position === 'center'
+                ? 'top-1/2 -translate-y-1/2'
+                : watermark?.text.trim() && watermark.position === 'bottom'
+                  ? 'bottom-12'
+                  : 'bottom-4'
+            } ${
+              captionLook.style === 'box'
+                ? 'rounded-xl bg-white text-black'
+                : 'rounded-xl text-white [text-shadow:0_1px_2px_rgba(0,0,0,.9),0_0_8px_rgba(0,0,0,.55)]'
             }`}
           >
             {activeCaption.text}

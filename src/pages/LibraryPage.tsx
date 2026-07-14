@@ -364,15 +364,21 @@ export function LibraryPage() {
       </div>
 
       {selected && !selectMode ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
           <button
             type="button"
             aria-label="Fechar"
             className="absolute inset-0 bg-black/50 backdrop-blur-[2px]"
             onClick={() => setSelected(null)}
           />
-          <div className="slide-up relative z-10 max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl border border-white/8 bg-surface p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl sm:rounded-3xl sm:p-5">
-            <div className="mb-3 flex items-start justify-between gap-3">
+          <div
+            className="slide-up relative z-10 flex w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-white/8 bg-surface shadow-2xl sm:rounded-3xl"
+            style={{
+              maxHeight:
+                'min(92dvh, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)))',
+            }}
+          >
+            <div className="flex shrink-0 items-start justify-between gap-3 px-4 pb-2 pt-4 sm:px-5 sm:pt-5">
               <div className="min-w-0">
                 <p className="truncate font-display text-lg font-bold tracking-tight">
                   {selected.title}
@@ -392,63 +398,65 @@ export function LibraryPage() {
               </button>
             </div>
 
-            {selectedUrl ? (
-              <ClipPlayer
-                src={selectedUrl}
-                captions={selected.captions}
-                aspectClassName="aspect-[9/16] max-h-[50dvh] w-full object-contain"
-                autoPlay
-              />
-            ) : (
-              <p className="rounded-2xl bg-mist px-4 py-8 text-center text-sm text-muted">
-                Vídeo ainda não disponível.
-              </p>
-            )}
-
-            <div className="mt-3 flex gap-2">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5 sm:pb-5">
               {selectedUrl ? (
-                <>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="flex-1"
-                    loading={downloadingId === selected.id}
-                    onClick={() => void download(selected)}
-                  >
-                    <Download className="h-4 w-4" />
-                    Baixar
-                  </Button>
-                  <a
-                    href={selectedUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="press inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 bg-lift py-3 text-sm font-semibold"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                    Abrir
-                  </a>
-                </>
-              ) : null}
-              <Button
-                type="button"
-                variant="ghost"
-                className="!px-3 text-danger"
-                onClick={() => setPendingDeleteIds([selected.id])}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
+                <ClipPlayer
+                  src={selectedUrl}
+                  captions={selected.captions}
+                  aspectClassName="mx-auto aspect-[9/16] max-h-[min(42dvh,360px)] w-full object-contain sm:max-h-[50dvh]"
+                  autoPlay
+                />
+              ) : (
+                <p className="rounded-2xl bg-mist px-4 py-8 text-center text-sm text-muted">
+                  Vídeo ainda não disponível.
+                </p>
+              )}
 
-            <div className="mt-3">
-              <SharePanel
-                clip={selected}
-                onUpdated={(updated) => {
-                  setSelected(updated)
-                  setClips((prev) =>
-                    prev.map((c) => (c.id === updated.id ? updated : c)),
-                  )
-                }}
-              />
+              <div className="mt-3 flex gap-2">
+                {selectedUrl ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="flex-1"
+                      loading={downloadingId === selected.id}
+                      onClick={() => void download(selected)}
+                    >
+                      <Download className="h-4 w-4" />
+                      Baixar
+                    </Button>
+                    <a
+                      href={selectedUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="press inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 bg-lift py-3 text-sm font-semibold"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      Abrir
+                    </a>
+                  </>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="!px-3 text-danger"
+                  onClick={() => setPendingDeleteIds([selected.id])}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="mt-3">
+                <SharePanel
+                  clip={selected}
+                  onUpdated={(updated) => {
+                    setSelected(updated)
+                    setClips((prev) =>
+                      prev.map((c) => (c.id === updated.id ? updated : c)),
+                    )
+                  }}
+                />
+              </div>
             </div>
           </div>
         </div>

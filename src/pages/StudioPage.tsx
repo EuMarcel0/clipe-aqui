@@ -31,12 +31,16 @@ import {
   type BillingStatus,
 } from '../lib/billing'
 import type {
+  CaptionLook,
+  CaptionPosition,
   CaptionSegment,
+  CaptionStyle,
   ClipRow,
   ExportPreset,
   StudioStep,
   WatermarkPosition,
 } from '../types'
+import { DEFAULT_CAPTION_LOOK } from '../types'
 
 export function StudioPage() {
   const [file, setFile] = useState<File | null>(null)
@@ -50,6 +54,9 @@ export function StudioPage() {
   const [exportPreset, setExportPreset] = useState<ExportPreset>('reels')
   const [watermarkText, setWatermarkText] = useState('')
   const [watermarkPosition, setWatermarkPosition] = useState<WatermarkPosition>('bottom')
+  const [captionPosition, setCaptionPosition] =
+    useState<CaptionPosition>(DEFAULT_CAPTION_LOOK.position)
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(DEFAULT_CAPTION_LOOK.style)
   const [costUsd, setCostUsd] = useState<number | null>(null)
   const [savedClip, setSavedClip] = useState<ClipRow | null>(null)
   const [busy, setBusy] = useState(false)
@@ -94,6 +101,11 @@ export function StudioPage() {
     [watermarkText, watermarkPosition],
   )
 
+  const captionLook = useMemo<CaptionLook>(
+    () => ({ position: captionPosition, style: captionStyle }),
+    [captionPosition, captionStyle],
+  )
+
   const clipDuration = Math.max(0, end - start)
   const maxClipSeconds =
     billing && billing.credits > 0 ? null : (billing?.max_clip_seconds ?? FREE_MAX_CLIP_SECONDS)
@@ -104,6 +116,8 @@ export function StudioPage() {
     setCaptions([])
     setWatermarkText('')
     setWatermarkPosition('bottom')
+    setCaptionPosition(DEFAULT_CAPTION_LOOK.position)
+    setCaptionStyle(DEFAULT_CAPTION_LOOK.style)
     setCostUsd(null)
     setError(null)
 
@@ -249,6 +263,7 @@ export function StudioPage() {
       const blob = await exportClipFromSource(file, start, end, {
         preset: exportPreset,
         captions,
+        captionLook,
         watermark,
         onProgress: (r) => {
           if (r < 0.95) {
@@ -434,6 +449,7 @@ export function StudioPage() {
             duration={duration}
             onChangeRange={onChangeRange}
             captions={captions}
+            captionLook={captionLook}
             watermark={watermark}
             maxClipSeconds={maxClipSeconds}
           />
@@ -493,6 +509,38 @@ export function StudioPage() {
             <p className="mb-3 text-sm text-muted">
               Gere legendas com IA no trecho selecionado ({formatPrecise(clipDuration)}).
             </p>
+
+            <p className="mb-2 text-xs font-medium text-muted">Posição</p>
+            <div className="mb-3 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Posição da legenda">
+              <Choice
+                active={captionPosition === 'base'}
+                onClick={() => setCaptionPosition('base')}
+                title="Base"
+                subtitle="Embaixo do vídeo"
+              />
+              <Choice
+                active={captionPosition === 'center'}
+                onClick={() => setCaptionPosition('center')}
+                title="Centro"
+                subtitle="Meio do frame"
+              />
+            </div>
+
+            <p className="mb-2 text-xs font-medium text-muted">Estilo</p>
+            <div className="mb-3 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Estilo da legenda">
+              <Choice
+                active={captionStyle === 'normal'}
+                onClick={() => setCaptionStyle('normal')}
+                title="Normal"
+                subtitle="Texto branco"
+              />
+              <Choice
+                active={captionStyle === 'box'}
+                onClick={() => setCaptionStyle('box')}
+                title="Com fundo"
+                subtitle="Preto no branco"
+              />
+            </div>
 
             {captions.length > 0 ? (
               <div className="mb-3 space-y-2">

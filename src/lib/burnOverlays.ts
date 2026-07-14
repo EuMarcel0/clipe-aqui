@@ -1,10 +1,17 @@
-import type { CaptionSegment, ExportPreset, WatermarkConfig } from '../types'
+import type {
+  CaptionLook,
+  CaptionSegment,
+  ExportPreset,
+  WatermarkConfig,
+} from '../types'
+import { DEFAULT_CAPTION_LOOK } from '../types'
 import { getActiveCaptionAt, normalizeCaptionSegments } from './captions'
 import { getReelsExportFrame, drawContainFrame } from './exportPresets'
 
 type ExportOptions = {
   preset: ExportPreset
   captions?: CaptionSegment[]
+  captionLook?: CaptionLook
   watermark?: WatermarkConfig | null
   onProgress?: (ratio: number) => void
 }
@@ -44,6 +51,7 @@ export async function exportClipFromSource(
 
   const blob = await recordSegment(file, start, end, {
     captions: needsPass ? usable : [],
+    captionLook: options.captionLook ?? DEFAULT_CAPTION_LOOK,
     watermark: needsPass ? mark : null,
     target: needsPass ? target : null,
     // Sem overlays e sem reels: ainda corta, só sem desenhar textos
@@ -90,6 +98,7 @@ export async function finalizeClipExport(
 
   const exported = await recordSegment(videoBlob, 0, clipDuration, {
     captions: usable,
+    captionLook: options.captionLook ?? DEFAULT_CAPTION_LOOK,
     watermark: mark,
     target,
     scaleDown: false,
@@ -120,6 +129,7 @@ export async function burnCaptionsIntoVideo(
 
 type RecordOptions = {
   captions: CaptionSegment[]
+  captionLook: CaptionLook
   watermark: WatermarkConfig | null
   target: { width: number; height: number } | null
   scaleDown: boolean
@@ -189,6 +199,7 @@ async function recordSegment(
       options.target,
       options.watermark,
       options.captions,
+      options.captionLook,
       0,
     )
 
@@ -284,6 +295,7 @@ async function recordSegment(
       options.target,
       options.watermark,
       options.captions,
+      options.captionLook,
       0,
     )
     pushCanvasFrame(ctx, activeCanvasTrack, useManualFrames)
@@ -368,6 +380,7 @@ async function recordSegment(
           options.target,
           options.watermark,
           options.captions,
+          options.captionLook,
           clipTime,
         )
         pushCanvasFrame(ctx, activeCanvasTrack, useManualFrames)
@@ -564,6 +577,7 @@ function paintFrame(
   target: { width: number; height: number } | null,
   watermark: WatermarkConfig | null,
   captions: CaptionSegment[],
+  captionLook: CaptionLook,
   clipTime: number,
 ) {
   if (target) {
@@ -572,7 +586,7 @@ function paintFrame(
     ctx.drawImage(video, 0, 0, width, height)
   }
   drawWatermark(ctx, watermark, width, height)
-  drawCaption(ctx, captions, clipTime, watermark, width, height)
+  drawCaption(ctx, captions, clipTime, watermark, captionLook, width, height)
 }
 
 function drawWatermark(
@@ -607,35 +621,98 @@ function drawCaption(
   captions: CaptionSegment[],
   time: number,
   watermark: WatermarkConfig | null,
+  captionLook: CaptionLook,
   width: number,
   height: number,
 ) {
   const active = getActiveCaptionAt(captions, time)
   if (!active?.text.trim()) return
 
+  const look = captionLook ?? DEFAULT_CAPTION_LOOK
   const lines = wrapText(active.text.trim(), 28)
   const fontSize = Math.max(22, Math.round(width * 0.048))
   const lineHeight = fontSize * 1.25
-  const bottomPad =
-    watermark?.text.trim() && watermark.position === 'bottom'
-      ? Math.max(78, height * 0.15)
-      : Math.max(40, height * 0.08)
-  const baseY = height - bottomPad
+  const blockHeight = lines.length * lineHeight
+  const padX = Math.max(14, Math.round(fontSize * 0.45))
+  const padY = Math.max(10, Math.round(fontSize * 0.35))
 
   ctx.save()
   ctx.font = `700 ${fontSize}px "Plus Jakarta Sans", Arial, sans-serif`
   ctx.textAlign = 'center'
-  ctx.textBaseline = 'bottom'
-  ctx.lineWidth = Math.max(3, Math.round(fontSize * 0.14))
-  ctx.strokeStyle = 'rgba(0,0,0,0.9)'
-  ctx.fillStyle = '#ffffff'
+
+  let anchorY: number
+  if (look.position === 'center') {
+    ctx.textBaseline = 'middle'
+    anchorY = height * 0.5
+  } else {
+    ctx.textBaseline = 'bottom'
+    const bottomPad =
+      watermark?.text.trim() && watermark.position === 'bottom'
+        ? Math.max(78, height * 0.15)
+        : Math.max(40, height * 0.08)
+    anchorY = height - bottomPad
+  }
+
+  // Largura do bloco (maior linha)
+  let maxLineW = 0
+  for (const line of lines) {
+    maxLineW = Math.max(maxLineW, ctx.measureText(line).width)
+  }
+  const boxW = maxLineW + padX * 2
+  const boxH = blockHeight + padY * 2
+  const boxX = width / 2 - boxW / 2
+  const boxY =
+    look.position === 'center'
+      ? anchorY - boxH / 2
+      : anchorY - boxH
+
+  if (look.style === 'box') {
+    const radius = Math.max(8, Math.round(fontSize * 0.35))
+    ctx.fillStyle = '#ffffff'
+    roundRect(ctx, boxX, boxY, boxW, boxH, radius)
+    ctx.fill()
+    ctx.fillStyle = '#0a0a0a'
+    ctx.strokeStyle = 'transparent'
+    ctx.lineWidth = 0
+  } else {
+    // Comportamento atual: branco com contorno escuro
+    ctx.lineWidth = Math.max(3, Math.round(fontSize * 0.14))
+    ctx.strokeStyle = 'rgba(0,0,0,0.9)'
+    ctx.fillStyle = '#ffffff'
+  }
 
   lines.forEach((line, idx) => {
-    const y = baseY - (lines.length - 1 - idx) * lineHeight
-    ctx.strokeText(line, width / 2, y)
+    let y: number
+    if (look.position === 'center') {
+      const startY = anchorY - ((lines.length - 1) * lineHeight) / 2
+      y = startY + idx * lineHeight
+    } else {
+      y = anchorY - (lines.length - 1 - idx) * lineHeight
+    }
+    if (look.style === 'normal') {
+      ctx.strokeText(line, width / 2, y)
+    }
     ctx.fillText(line, width / 2, y)
   })
   ctx.restore()
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  const radius = Math.min(r, w / 2, h / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + radius, y)
+  ctx.arcTo(x + w, y, x + w, y + h, radius)
+  ctx.arcTo(x + w, y + h, x, y + h, radius)
+  ctx.arcTo(x, y + h, x, y, radius)
+  ctx.arcTo(x, y, x + w, y, radius)
+  ctx.closePath()
 }
 
 function wrapText(text: string, maxChars: number) {

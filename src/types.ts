@@ -4,6 +4,22 @@ export type CaptionSegment = {
   text: string
 }
 
+/** Posição vertical da legenda no frame (padrão: base = comportamento atual). */
+export type CaptionPosition = 'base' | 'center'
+
+/** Estilo visual da legenda (padrão: normal = texto branco com contorno). */
+export type CaptionStyle = 'normal' | 'box'
+
+export type CaptionLook = {
+  position: CaptionPosition
+  style: CaptionStyle
+}
+
+export const DEFAULT_CAPTION_LOOK: CaptionLook = {
+  position: 'base',
+  style: 'normal',
+}
+
 export type WatermarkPosition = 'top' | 'bottom'
 
 export type WatermarkConfig = {

@@ -108,47 +108,70 @@ Deno.serve(async (req) => {
       httpClient: Stripe.createFetchHttpClient(),
     });
 
-    let customerId = profile?.stripe_customer_id as string | null | undefined;
-    if (!customerId) {
-      const customer = await stripe.customers.create({
-        email: user.email ?? profile?.email ?? undefined,
-        metadata: { supabase_user_id: user.id },
-      });
-      customerId = customer.id;
-      await admin
-        .from("users")
-        .upsert(
-          {
-            id: user.id,
-            email: user.email ?? profile?.email ?? "",
-            stripe_customer_id: customerId,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "id" },
-        );
-    }
+    const email = user.email ?? profile?.email ?? undefined;
+    let customerId = await resolveStripeCustomer({
+      stripe,
+      admin,
+      userId: user.id,
+      email,
+      existingId: (profile?.stripe_customer_id as string | null | undefined) ?? null,
+    });
 
     const credits = PACK_CREDITS[packId];
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      customer: customerId,
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      client_reference_id: user.id,
-      metadata: {
-        supabase_user_id: user.id,
-        pack_id: packId,
-        credits: String(credits),
-      },
-      payment_intent_data: {
+    let session: Stripe.Checkout.Session;
+    try {
+      session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        customer: customerId,
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        client_reference_id: user.id,
         metadata: {
           supabase_user_id: user.id,
           pack_id: packId,
           credits: String(credits),
         },
-      },
-    });
+        payment_intent_data: {
+          metadata: {
+            supabase_user_id: user.id,
+            pack_id: packId,
+            credits: String(credits),
+          },
+        },
+      });
+    } catch (err) {
+      // Customer da conta Stripe antiga (troca de projeto) — recria e tenta de novo
+      if (!isMissingCustomerError(err)) throw err;
+      customerId = await resolveStripeCustomer({
+        stripe,
+        admin,
+        userId: user.id,
+        email,
+        existingId: null,
+        forceNew: true,
+      });
+      session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        customer: customerId,
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        client_reference_id: user.id,
+        metadata: {
+          supabase_user_id: user.id,
+          pack_id: packId,
+          credits: String(credits),
+        },
+        payment_intent_data: {
+          metadata: {
+            supabase_user_id: user.id,
+            pack_id: packId,
+            credits: String(credits),
+          },
+        },
+      });
+    }
 
     if (!session.url) return json({ error: "Checkout sem URL" }, 502);
     return json({ url: session.url, sessionId: session.id });
@@ -159,6 +182,51 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+function isMissingCustomerError(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /No such customer/i.test(msg);
+}
+
+async function resolveStripeCustomer(input: {
+  stripe: Stripe;
+  admin: ReturnType<typeof createClient>;
+  userId: string;
+  email?: string;
+  existingId: string | null;
+  forceNew?: boolean;
+}) {
+  const { stripe, admin, userId, email, forceNew } = input;
+  let customerId = forceNew ? null : input.existingId;
+
+  if (customerId) {
+    try {
+      await stripe.customers.retrieve(customerId);
+      return customerId;
+    } catch (err) {
+      if (!isMissingCustomerError(err)) throw err;
+      customerId = null;
+    }
+  }
+
+  const customer = await stripe.customers.create({
+    email,
+    metadata: { supabase_user_id: userId },
+  });
+  customerId = customer.id;
+
+  await admin.from("users").upsert(
+    {
+      id: userId,
+      email: email ?? "",
+      stripe_customer_id: customerId,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "id" },
+  );
+
+  return customerId;
+}
 
 function json(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {

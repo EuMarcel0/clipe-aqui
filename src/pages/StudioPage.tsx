@@ -4,6 +4,7 @@ import { Captions, CheckCircle2, Download, ExternalLink, Plus, Upload } from 'lu
 import { VideoTrimmer } from '../components/VideoTrimmer'
 import { Button } from '../components/Button'
 import { SharePanel } from '../components/SharePanel'
+import { ClipPlayer } from '../components/ClipPlayer'
 import {
   createClipDraft,
   getUploadUrl,
@@ -336,6 +337,8 @@ export function StudioPage() {
     }
   }
 
+  const savedMediaUrl = savedClip ? resolveClipMediaUrl(savedClip) : null
+
   return (
     <div className="space-y-4">
       {step === 'upload' ? (
@@ -580,28 +583,38 @@ export function StudioPage() {
                 ? 'Legendas gravadas no arquivo.'
                 : 'Pronto para compartilhar.'}
             </p>
-            {resolveClipMediaUrl(savedClip) ? (
-              <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
-                <a
-                  href={resolveClipMediaUrl(savedClip)!}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="press inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-paper"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                  Assistir
-                </a>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="sm:min-w-[8.5rem]"
-                  loading={downloading}
-                  onClick={() => void downloadSaved()}
-                >
-                  <Download className="h-4 w-4" />
-                  Baixar
-                </Button>
-              </div>
+            {savedMediaUrl ? (
+              <>
+                <div className="mx-auto mt-4 max-w-[280px]">
+                  <ClipPlayer
+                    src={savedMediaUrl}
+                    captions={[]}
+                    className="!rounded-2xl ring-1 ring-white/10"
+                    aspectClassName="aspect-[9/16] max-h-[52dvh] w-full object-contain"
+                  />
+                </div>
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
+                  <a
+                    href={savedMediaUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="press inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-paper"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Assistir
+                  </a>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="sm:min-w-[8.5rem]"
+                    loading={downloading}
+                    onClick={() => void downloadSaved()}
+                  >
+                    <Download className="h-4 w-4" />
+                    Baixar
+                  </Button>
+                </div>
+              </>
             ) : null}
           </div>
           <SharePanel clip={savedClip} onUpdated={setSavedClip} />

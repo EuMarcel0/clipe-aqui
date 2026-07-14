@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Check,
@@ -71,12 +71,6 @@ export function LibraryPage() {
 
   const pickedCount = picked.size
   const allSelected = clips.length > 0 && pickedCount === clips.length
-
-  const pendingDeleteClips = useMemo(() => {
-    if (!pendingDeleteIds?.length) return []
-    const idSet = new Set(pendingDeleteIds)
-    return clips.filter((c) => idSet.has(c.id))
-  }, [clips, pendingDeleteIds])
 
   const exitSelectMode = () => {
     setSelectMode(false)
@@ -184,17 +178,18 @@ export function LibraryPage() {
   }
 
   const selectedUrl = selected ? resolveClipMediaUrl(selected) : null
+  const deleteCount = pendingDeleteIds?.length ?? 0
   const deleteTitle =
-    pendingDeleteClips.length > 1
-      ? `Excluir ${pendingDeleteClips.length} clips?`
-      : 'Excluir este clip?'
+    deleteCount > 1
+      ? `Excluir ${deleteCount} vídeos permanentemente?`
+      : 'Excluir este vídeo permanentemente?'
   const deleteDescription =
-    pendingDeleteClips.length > 1
-      ? 'Os vídeos serão removidos dos seus projetos e do armazenamento. Essa ação não pode ser desfeita.'
-      : 'Essa ação não pode ser desfeita. O vídeo será removido dos seus projetos e do armazenamento.'
+    deleteCount > 1
+      ? `Os ${deleteCount} vídeos selecionados serão excluídos permanentemente dos seus projetos e do armazenamento. Essa ação não pode ser desfeita — não será possível recuperar os arquivos.`
+      : 'Este vídeo será excluído permanentemente dos seus projetos e do armazenamento. Essa ação não pode ser desfeita — não será possível recuperá-lo.'
 
   return (
-    <div className={`space-y-4 ${selectMode && pickedCount > 0 ? 'pb-24' : ''}`}>
+    <div className="space-y-4">
       <div className="flex items-end justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight">
@@ -261,6 +256,26 @@ export function LibraryPage() {
           )}
         </div>
       </div>
+
+      {selectMode ? (
+        <div className="sticky top-0 z-30 -mx-1 flex items-center gap-2 rounded-2xl border border-white/10 bg-surface/95 px-3 py-2.5 backdrop-blur-md">
+          <p className="min-w-0 flex-1 truncate text-sm text-muted">
+            {pickedCount > 0
+              ? `${pickedCount} vídeo${pickedCount === 1 ? '' : 's'}`
+              : 'Selecione os vídeos'}
+          </p>
+          <Button
+            type="button"
+            variant="danger"
+            className="!px-4 shrink-0"
+            disabled={pickedCount === 0}
+            onClick={() => setPendingDeleteIds([...picked])}
+          >
+            <Trash2 className="h-4 w-4" />
+            Excluir
+          </Button>
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted">
@@ -347,25 +362,6 @@ export function LibraryPage() {
           )
         })}
       </div>
-
-      {selectMode && pickedCount > 0 ? (
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-surface/95 px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur-md">
-          <div className="mx-auto flex max-w-lg items-center gap-2">
-            <p className="min-w-0 flex-1 truncate text-sm text-muted">
-              {pickedCount} vídeo{pickedCount === 1 ? '' : 's'}
-            </p>
-            <Button
-              type="button"
-              variant="danger"
-              className="!px-4"
-              onClick={() => setPendingDeleteIds([...picked])}
-            >
-              <Trash2 className="h-4 w-4" />
-              Excluir
-            </Button>
-          </div>
-        </div>
-      ) : null}
 
       {selected && !selectMode ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
@@ -463,9 +459,7 @@ export function LibraryPage() {
         title={deleteTitle}
         description={deleteDescription}
         confirmLabel={
-          pendingDeleteClips.length > 1
-            ? `Excluir ${pendingDeleteClips.length}`
-            : 'Excluir'
+          deleteCount > 1 ? `Excluir ${deleteCount} permanentemente` : 'Excluir permanentemente'
         }
         cancelLabel="Cancelar"
         danger

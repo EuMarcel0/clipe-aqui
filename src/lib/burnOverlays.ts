@@ -632,63 +632,57 @@ function drawCaption(
   const lines = wrapText(active.text.trim(), 28)
   const fontSize = Math.max(22, Math.round(width * 0.048))
   const lineHeight = fontSize * 1.25
-  const blockHeight = lines.length * lineHeight
-  const padX = Math.max(14, Math.round(fontSize * 0.45))
-  const padY = Math.max(10, Math.round(fontSize * 0.35))
+  const padX = Math.max(12, Math.round(fontSize * 0.4))
+  const padY = Math.max(5, Math.round(fontSize * 0.18))
 
   ctx.save()
   ctx.font = `700 ${fontSize}px "Plus Jakarta Sans", Arial, sans-serif`
   ctx.textAlign = 'center'
+  // alphabetic + métricas reais → texto visualmente centralizado no fundo
+  ctx.textBaseline = 'alphabetic'
 
-  let anchorY: number
+  let blockBottom: number
   if (look.position === 'center') {
-    ctx.textBaseline = 'middle'
-    anchorY = height * 0.5
+    blockBottom = height * 0.5 + ((lines.length - 1) * lineHeight) / 2 + fontSize * 0.35
   } else {
-    ctx.textBaseline = 'bottom'
     const bottomPad =
       watermark?.text.trim() && watermark.position === 'bottom'
         ? Math.max(78, height * 0.15)
         : Math.max(40, height * 0.08)
-    anchorY = height - bottomPad
+    blockBottom = height - bottomPad
   }
 
-  // Largura do bloco (maior linha)
-  let maxLineW = 0
-  for (const line of lines) {
-    maxLineW = Math.max(maxLineW, ctx.measureText(line).width)
+  const baselineY = (idx: number) =>
+    blockBottom - (lines.length - 1 - idx) * lineHeight
+
+  const inkMetrics = (line: string) => {
+    const m = ctx.measureText(line)
+    const ascent = m.actualBoundingBoxAscent || fontSize * 0.72
+    const descent = m.actualBoundingBoxDescent || fontSize * 0.2
+    return { width: m.width, ascent, descent }
   }
-  const boxW = maxLineW + padX * 2
-  const boxH = blockHeight + padY * 2
-  const boxX = width / 2 - boxW / 2
-  const boxY =
-    look.position === 'center'
-      ? anchorY - boxH / 2
-      : anchorY - boxH
 
   if (look.style === 'box') {
-    const radius = Math.max(8, Math.round(fontSize * 0.35))
+    const radius = Math.max(6, Math.round(fontSize * 0.28))
     ctx.fillStyle = '#ffffff'
-    roundRect(ctx, boxX, boxY, boxW, boxH, radius)
-    ctx.fill()
+    lines.forEach((line, idx) => {
+      const { width: tw, ascent, descent } = inkMetrics(line)
+      const boxW = tw + padX * 2
+      const boxH = ascent + descent + padY * 2
+      const y = baselineY(idx)
+      const boxY = y - ascent - padY
+      roundRect(ctx, width / 2 - boxW / 2, boxY, boxW, boxH, radius)
+      ctx.fill()
+    })
     ctx.fillStyle = '#0a0a0a'
-    ctx.strokeStyle = 'transparent'
-    ctx.lineWidth = 0
   } else {
-    // Comportamento atual: branco com contorno escuro
     ctx.lineWidth = Math.max(3, Math.round(fontSize * 0.14))
     ctx.strokeStyle = 'rgba(0,0,0,0.9)'
     ctx.fillStyle = '#ffffff'
   }
 
   lines.forEach((line, idx) => {
-    let y: number
-    if (look.position === 'center') {
-      const startY = anchorY - ((lines.length - 1) * lineHeight) / 2
-      y = startY + idx * lineHeight
-    } else {
-      y = anchorY - (lines.length - 1 - idx) * lineHeight
-    }
+    const y = baselineY(idx)
     if (look.style === 'normal') {
       ctx.strokeText(line, width / 2, y)
     }

@@ -153,19 +153,23 @@ export function VideoTrimmer({
         ) : null}
         {activeCaption ? (
           <div
-            className={`pointer-events-none absolute left-1/2 w-[92%] max-w-full -translate-x-1/2 px-3 py-2 text-center text-sm font-semibold leading-snug sm:text-base ${
+            className={`pointer-events-none absolute left-1/2 w-[92%] max-w-full -translate-x-1/2 text-center text-sm font-semibold leading-snug sm:text-base ${
               captionLook.position === 'center'
                 ? 'top-1/2 -translate-y-1/2'
                 : watermark?.text.trim() && watermark.position === 'bottom'
                   ? 'bottom-12'
                   : 'bottom-4'
-            } ${
-              captionLook.style === 'box'
-                ? 'rounded-xl bg-white text-black'
-                : 'rounded-xl text-white [text-shadow:0_1px_2px_rgba(0,0,0,.9),0_0_8px_rgba(0,0,0,.55)]'
             }`}
           >
-            {activeCaption.text}
+            <span
+              className={
+                captionLook.style === 'box'
+                  ? 'inline rounded-[0.45em] bg-white px-[0.45em] pt-[0.12em] pb-[0.22em] leading-none text-black [box-decoration-break:clone] [-webkit-box-decoration-break:clone]'
+                  : 'inline rounded-xl px-1 text-white [text-shadow:0_1px_2px_rgba(0,0,0,.9),0_0_8px_rgba(0,0,0,.55)]'
+              }
+            >
+              {activeCaption.text}
+            </span>
           </div>
         ) : null}
       </div>

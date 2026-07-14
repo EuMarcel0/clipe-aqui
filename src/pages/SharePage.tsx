@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getClipByShareToken, resolveClipMediaUrl } from '../lib/clips'
+import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { BrandLogo } from '../components/BrandLogo'
 import { ClipPlayer } from '../components/ClipPlayer'
 import type { ClipRow } from '../types'
@@ -10,6 +11,18 @@ export function SharePage() {
   const [clip, setClip] = useState<ClipRow | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  useDocumentMeta({
+    title: clip?.title
+      ? `${clip.title} — clip no Clipe Aqui`
+      : 'Assistir clip — Clipe Aqui',
+    description: clip?.title
+      ? `Assista “${clip.title}”, criado no Clipe Aqui — editor de vídeos com legendas por IA para Reels e Shorts.`
+      : 'Assista a um clip criado no Clipe Aqui — corte, legendas com IA e export vertical para redes sociais.',
+    path: token ? `/s/${token}` : '/s',
+    type: 'video.other',
+    image: '/og-image.png',
+  })
 
   useEffect(() => {
     if (!token) return

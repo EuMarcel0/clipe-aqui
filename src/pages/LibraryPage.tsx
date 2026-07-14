@@ -18,8 +18,14 @@ import { Button } from '../components/Button'
 import { ClipPlayer } from '../components/ClipPlayer'
 import { ClipThumbnail } from '../components/ClipThumbnail'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { useDocumentMeta } from '../hooks/useDocumentMeta'
 
 export function LibraryPage() {
+  useDocumentMeta({
+    title: 'Projetos — seus clips salvos',
+    path: '/biblioteca',
+    noIndex: true,
+  })
   const [clips, setClips] = useState<ClipRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

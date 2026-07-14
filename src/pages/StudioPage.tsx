@@ -42,7 +42,16 @@ import type {
 } from '../types'
 import { DEFAULT_CAPTION_LOOK } from '../types'
 
+import { useDocumentMeta } from '../hooks/useDocumentMeta'
+
 export function StudioPage() {
+  useDocumentMeta({
+    title: 'Studio — criar clip com legendas IA',
+    description:
+      'Importe um vídeo, corte o trecho, gere legendas com IA e exporte para Reels no Clipe Aqui.',
+    path: '/criar',
+    noIndex: true,
+  })
   const [file, setFile] = useState<File | null>(null)
   const [objectUrl, setObjectUrl] = useState<string | null>(null)
   const [title, setTitle] = useState('')

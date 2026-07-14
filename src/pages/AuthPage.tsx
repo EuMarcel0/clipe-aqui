@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, Mail } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { useDocumentMeta } from '../hooks/useDocumentMeta'
 import { Button } from '../components/Button'
 import { BrandLogo } from '../components/BrandLogo'
 import { isSupabaseConfigured } from '../lib/supabase'
@@ -10,6 +11,16 @@ import { formatWhatsapp, isValidWhatsapp } from '../lib/phone'
 export function AuthPage() {
   const { signIn, signUp, signInWithGoogle } = useAuth()
   const [mode, setMode] = useState<'login' | 'signup'>('login')
+
+  useDocumentMeta({
+    title:
+      mode === 'signup'
+        ? 'Criar conta — comece a editar Reels com IA'
+        : 'Entrar — edite clips e legendas com IA',
+    description:
+      'Acesse o Clipe Aqui para cortar vídeos, gerar legendas com IA e exportar Reels prontos para TikTok, Instagram e Shorts.',
+    path: '/auth',
+  })
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [whatsapp, setWhatsapp] = useState('')

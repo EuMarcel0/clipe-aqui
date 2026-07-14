@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /criar
+Disallow: /biblioteca
+Disallow: /planos
+Disallow: /auth
+Disallow: /auth/callback
+
+Sitemap: https://www.clipeaqui.com.br/sitemap.xml

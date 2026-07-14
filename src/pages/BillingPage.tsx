@@ -11,8 +11,16 @@ import {
 } from '../lib/billing'
 import { getErrorMessage } from '../lib/errors'
 import { useAuth } from '../hooks/useAuth'
+import { useDocumentMeta } from '../hooks/useDocumentMeta'
 
 export function BillingPage() {
+  useDocumentMeta({
+    title: 'Créditos e planos',
+    description:
+      'Compre créditos no Clipe Aqui para criar mais clips com legendas por IA e exportar Reels.',
+    path: '/planos',
+    noIndex: true,
+  })
   const { user } = useAuth()
   const [params] = useSearchParams()
   const [status, setStatus] = useState<BillingStatus | null>(null)

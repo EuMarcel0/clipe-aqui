@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { useDocumentMeta, SITE_DESCRIPTION } from '../hooks/useDocumentMeta'
 import { BrandLogo } from '../components/BrandLogo'
 import { HeroReelCanvas } from '../components/HeroReelCanvas'
 
@@ -10,6 +11,12 @@ export function LandingPage() {
   // const [videoOk, setVideoOk] = useState(false)
   const [ready, setReady] = useState(false)
   const startTo = user ? '/criar' : '/auth'
+
+  useDocumentMeta({
+    title: 'Clipe Aqui — Corte, legendas com IA e export para Reels',
+    description: SITE_DESCRIPTION,
+    path: '/',
+  })
 
   useEffect(() => {
     const t = window.setTimeout(() => setReady(true), 40)
@@ -82,11 +89,12 @@ export function LandingPage() {
             <p className="font-display text-[clamp(3.25rem,12vw,6.5rem)] font-extrabold leading-[0.9] tracking-[-0.04em] text-white">
               Clipe Aqui
             </p>
-            <h1 className="mt-5 max-w-[18ch] font-display text-[clamp(1.35rem,3.8vw,2.15rem)] font-semibold leading-tight tracking-tight text-white/95">
-              Do vídeo bruto ao Reels, no celular.
+            <h1 className="mt-5 max-w-[22ch] font-display text-[clamp(1.35rem,3.8vw,2.15rem)] font-semibold leading-tight tracking-tight text-white/95">
+              Do vídeo bruto ao Reels: corte, legendas com IA e export no celular.
             </h1>
-            <p className="mt-4 max-w-[34ch] text-[15px] leading-relaxed text-white/65 sm:text-base">
-              Corte, legende com IA e exporte no formato que TikTok, Instagram e Shorts pedem.
+            <p className="mt-4 max-w-[40ch] text-[15px] leading-relaxed text-white/65 sm:text-base">
+              Transforme vídeos longos em clips verticais prontos para TikTok, Instagram Reels e
+              YouTube Shorts — com legendas automáticas e marca d’água.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link

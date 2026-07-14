@@ -112,21 +112,51 @@ export function StudioPage() {
       return
     }
 
+    // Libera a UI imediatamente; metadata resolve em seguida
     const url = URL.createObjectURL(next)
+    const initialMax = maxClipSeconds ?? FREE_MAX_CLIP_SECONDS
+    setFile(next)
+    setObjectUrl(url)
+    setTitle(next.name.replace(/\.[^.]+$/, ''))
+    setDuration(0)
+    setStart(0)
+    setEnd(initialMax)
+    setStep('trim')
+
     const video = document.createElement('video')
     video.preload = 'metadata'
+    video.muted = true
+    video.playsInline = true
     video.src = url
-    video.onloadedmetadata = () => {
-      const d = video.duration || 0
-      const initialMax = maxClipSeconds ?? FREE_MAX_CLIP_SECONDS
-      setDuration(d)
+
+    let settled = false
+    const applyDuration = (d: number) => {
+      const safe = Number.isFinite(d) && d > 0 ? d : initialMax
+      setDuration(safe)
       setStart(0)
-      setEnd(Math.min(d, initialMax))
-      setFile(next)
-      setObjectUrl(url)
-      setTitle(next.name.replace(/\.[^.]+$/, ''))
-      setStep('trim')
+      setEnd(Math.min(safe, initialMax))
     }
+
+    const onMeta = () => {
+      if (settled) return
+      settled = true
+      applyDuration(video.duration || 0)
+    }
+    const onErr = () => {
+      if (settled) return
+      settled = true
+      setError('Não foi possível ler este vídeo. Tente outro arquivo (MP4/MOV).')
+      setStep('upload')
+      setFile(null)
+      URL.revokeObjectURL(url)
+      setObjectUrl(null)
+    }
+
+    video.addEventListener('loadedmetadata', onMeta, { once: true })
+    video.addEventListener('error', onErr, { once: true })
+    window.setTimeout(() => {
+      if (!settled && video.readyState < 1) onErr()
+    }, 20_000)
   }
 
   const onChangeRange = useCallback(
@@ -213,7 +243,6 @@ export function StudioPage() {
     setError(null)
     setProgress('Preparando seu clip…')
     try {
-      // Exporta antes de consumir a cota — evita gastar create se a gravação falhar
       const blob = await exportClipFromSource(file, start, end, {
         preset: exportPreset,
         captions,
@@ -222,10 +251,29 @@ export function StudioPage() {
           if (r < 0.95) {
             setProgress(`Gravando no vídeo… ${Math.round(r * 100)}%`)
           } else {
-            setProgress('Salvando…')
+            setProgress('Enviando…')
           }
         },
       })
+
+      const contentType = blob.type?.startsWith('video/') ? blob.type : 'video/mp4'
+      const ext = contentType.includes('webm') ? 'webm' : 'mp4'
+      const uploadId = crypto.randomUUID()
+
+      setProgress('Preparando envio…')
+      let upload: Awaited<ReturnType<typeof getUploadUrl>>
+      try {
+        upload = await getUploadUrl(uploadId, `${uploadId}.${ext}`, contentType)
+      } catch (err) {
+        throw new Error(getErrorMessage(err, 'Não foi possível preparar o envio do clip.'))
+      }
+
+      setProgress('Enviando para a nuvem…')
+      try {
+        await uploadClipToS3(blob, { ...upload, contentType })
+      } catch (err) {
+        throw new Error(getErrorMessage(err, 'Não foi possível enviar o clip.'))
+      }
 
       setProgress('Registrando clip…')
       const draft = await createClipDraft({
@@ -235,24 +283,6 @@ export function StudioPage() {
         start_seconds: start,
         end_seconds: end,
       })
-
-      setProgress('Enviando clip…')
-
-      const contentType = blob.type?.startsWith('video/') ? blob.type : 'video/mp4'
-      const ext = contentType.includes('webm') ? 'webm' : 'mp4'
-
-      let upload: Awaited<ReturnType<typeof getUploadUrl>>
-      try {
-        upload = await getUploadUrl(draft.id, `${draft.id}.${ext}`, contentType)
-      } catch (err) {
-        throw new Error(getErrorMessage(err, 'Não foi possível preparar o envio do clip.'))
-      }
-
-      try {
-        await uploadClipToS3(blob, { ...upload, contentType })
-      } catch (err) {
-        throw new Error(getErrorMessage(err, 'Não foi possível enviar o clip.'))
-      }
 
       const captionsVtt = segmentsToVtt(captions)
       const ready = await updateClip(draft.id, {

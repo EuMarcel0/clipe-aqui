@@ -52,20 +52,42 @@ Deno.serve(async (req) => {
     } = await userClient.auth.getUser();
     if (userError || !user) return json({ error: "Sessão inválida" }, 401);
 
-    const body = await req.json();
-    const packId = body.packId as PackId;
-    const successUrl = String(body.successUrl || "");
-    const cancelUrl = String(body.cancelUrl || "");
+    const parsed = await req.json();
+    // Aceita body direto, string JSON dupla, ou envelope { body: {...} } (dashboard / invoke)
+    let body: Record<string, unknown> =
+      typeof parsed === "string"
+        ? (JSON.parse(parsed) as Record<string, unknown>)
+        : (parsed as Record<string, unknown>);
+    if (
+      body &&
+      typeof body.body === "object" &&
+      body.body !== null &&
+      !("packId" in body) &&
+      !("pack_id" in body)
+    ) {
+      body = body.body as Record<string, unknown>;
+    }
 
-    if (!PACK_CREDITS[packId]) {
-      return json({ error: "Pacote inválido" }, 400);
+    const packId = String(body.packId ?? body.pack_id ?? "").trim() as PackId;
+    const successUrl = String(body.successUrl ?? body.success_url ?? "");
+    const cancelUrl = String(body.cancelUrl ?? body.cancel_url ?? "");
+
+    if (!(packId in PACK_CREDITS)) {
+      return json(
+        {
+          error: "Pacote inválido",
+          received: packId || null,
+          allowed: Object.keys(PACK_CREDITS),
+        },
+        400,
+      );
     }
     const priceId = priceMap[packId];
     if (!priceId) {
       return json(
         {
           error:
-            `Price do pacote ${packId} não configurado. Defina STRIPE_PRICE_${packId.toUpperCase()} nos secrets.`,
+            `Price do pacote ${packId} não configurado. Defina STRIPE_PRICE_PACK_${packId.replace("pack_", "").toUpperCase()} (ex.: STRIPE_PRICE_PACK_10) nos secrets.`,
         },
         500,
       );

@@ -158,31 +158,46 @@ export async function getUploadUrl(
     body: { clipId, filename, contentType },
   })
 
+  const payload = (data ?? null) as
+    | {
+        error?: string
+        detail?: string
+        uploadUrl?: string
+        key?: string
+        bucket?: string
+        publicUrl?: string
+        contentType?: string
+        token?: string
+        provider?: string
+      }
+    | null
+
   if (error) {
-    throw new Error(
-      (error as { message?: string }).message ||
-        'Falha ao criar URL de upload',
-    )
+    const fromBody = payload?.error
+      ? [payload.error, payload.detail].filter(Boolean).join(' — ')
+      : null
+    throw new Error(fromBody || error.message || 'Falha ao criar URL de upload')
   }
-  if (!data) {
+  if (!payload) {
     throw new Error('Resposta vazia ao criar URL de upload')
   }
-  if (data.error) {
+  if (payload.error) {
     throw new Error(
-      [data.error, data.detail].filter(Boolean).map(String).join(' — '),
+      [payload.error, payload.detail].filter(Boolean).map(String).join(' — '),
     )
   }
-  if (!data.uploadUrl || !data.key) {
+  if (!payload.uploadUrl || !payload.key || !payload.publicUrl) {
     throw new Error('URL de upload incompleta')
   }
 
-  return data as {
-    uploadUrl: string
-    token?: string
-    key: string
-    bucket: string
-    publicUrl: string
-    contentType: string
+  return {
+    uploadUrl: payload.uploadUrl,
+    token: payload.token,
+    key: payload.key,
+    bucket: payload.bucket ?? '',
+    publicUrl: payload.publicUrl,
+    contentType: payload.contentType || contentType,
+    provider: payload.provider,
   }
 }
 
@@ -194,6 +209,7 @@ export async function uploadClipToS3(
     key: string
     bucket?: string
     contentType: string
+    provider?: string
   },
 ) {
   if (blob.size < 1024) {
@@ -201,7 +217,7 @@ export async function uploadClipToS3(
   }
 
   // Legado: Supabase Storage signed upload
-  if (upload.token && upload.bucket) {
+  if (upload.token && upload.bucket && upload.provider !== 'r2') {
     const { error } = await supabase.storage
       .from(upload.bucket)
       .uploadToSignedUrl(upload.key, upload.token, blob, {
@@ -213,20 +229,17 @@ export async function uploadClipToS3(
     return
   }
 
-  // R2 / S3: PUT na URL pré-assinada
+  // R2: PUT sem Content-Type extra (assinatura não inclui esse header)
   const res = await fetch(upload.uploadUrl, {
     method: 'PUT',
-    headers: {
-      'Content-Type': upload.contentType,
-    },
     body: blob,
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
     throw new Error(
       body
-        ? `Falha no upload (${res.status}): ${body.slice(0, 160)}`
-        : `Falha no upload (${res.status})`,
+        ? `Falha no upload R2 (${res.status}): ${body.slice(0, 200)}`
+        : `Falha no upload R2 (${res.status})`,
     )
   }
 }

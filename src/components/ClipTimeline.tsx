@@ -16,7 +16,18 @@ type Props = {
 }
 
 const MIN_CLIP = 0.2
-const THUMB_COUNT = 12
+/** Poucos frames + yield evitam travar o browser em vídeos grandes do celular. */
+const THUMB_COUNT = 6
+
+function yieldToMain() {
+  return new Promise<void>((resolve) => {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => resolve(), { timeout: 80 })
+    } else {
+      window.setTimeout(() => resolve(), 0)
+    }
+  })
+}
 
 export function ClipTimeline({
   src,
@@ -32,6 +43,7 @@ export function ClipTimeline({
   const dragMode = useRef<DragMode>(null)
   const dragOrigin = useRef({ x: 0, start: 0, end: 0 })
   const [thumbs, setThumbs] = useState<string[]>([])
+  const [thumbsLoading, setThumbsLoading] = useState(false)
   const [dragging, setDragging] = useState<DragMode>(null)
 
   const max = duration > 0 ? duration : Math.max(end, start + 1, 1)
@@ -53,44 +65,112 @@ export function ClipTimeline({
 
   useEffect(() => {
     let cancelled = false
-    const urls: string[] = []
+    let video: HTMLVideoElement | null = null
 
     async function capture() {
-      if (!src || max <= 0) return
-      const video = document.createElement('video')
-      video.src = src
+      // Espera duração real do arquivo — evita gerar thumbs 2x com estimativa
+      if (!src || duration <= 0) return
+      setThumbsLoading(true)
+      setThumbs([])
+
+      // Deixa a UI do trim pintar antes de seekar o vídeo
+      await yieldToMain()
+      await new Promise<void>((r) => window.setTimeout(() => r(), 40))
+      if (cancelled) return
+
+      video = document.createElement('video')
       video.muted = true
       video.playsInline = true
-      video.preload = 'auto'
-      await waitForEvent(video, 'loadeddata')
+      video.preload = 'metadata'
+      video.src = src
+
+      try {
+        await Promise.race([
+          waitForEvent(video, 'loadeddata'),
+          new Promise<never>((_, reject) =>
+            window.setTimeout(() => reject(new Error('timeout')), 12_000),
+          ),
+        ])
+      } catch {
+        if (!cancelled) {
+          setThumbs([])
+          setThumbsLoading(false)
+        }
+        return
+      }
+
+      if (cancelled) return
 
       const canvas = document.createElement('canvas')
-      const w = 80
-      const h = Math.max(45, Math.round((video.videoHeight / Math.max(video.videoWidth, 1)) * w))
+      const w = 64
+      const h = Math.max(
+        36,
+        Math.round((video.videoHeight / Math.max(video.videoWidth, 1)) * w),
+      )
       canvas.width = w
       canvas.height = h
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
+      const ctx = canvas.getContext('2d', { alpha: false })
+      if (!ctx) {
+        setThumbsLoading(false)
+        return
+      }
 
       const frames: string[] = []
+      // Só amostra o começo útil (até ~clip máx free/pago), não o filme inteiro
+      const sampleUntil = Math.min(max, maxLen && maxLen > 0 ? Math.max(maxLen, 60) : 90)
+
       for (let i = 0; i < THUMB_COUNT; i++) {
         if (cancelled) break
-        const t = (i / Math.max(THUMB_COUNT - 1, 1)) * Math.max(max - 0.05, 0)
-        video.currentTime = t
-        await waitForEvent(video, 'seeked')
-        ctx.drawImage(video, 0, 0, w, h)
-        const url = canvas.toDataURL('image/jpeg', 0.55)
-        frames.push(url)
-        urls.push(url)
+        await yieldToMain()
+        if (cancelled || !video) break
+
+        const t = (i / Math.max(THUMB_COUNT - 1, 1)) * Math.max(sampleUntil - 0.05, 0)
+        try {
+          video.currentTime = t
+          await Promise.race([
+            waitForEvent(video, 'seeked'),
+            new Promise<never>((_, reject) =>
+              window.setTimeout(() => reject(new Error('seek timeout')), 4_000),
+            ),
+          ])
+        } catch {
+          continue
+        }
+        if (cancelled) break
+
+        try {
+          ctx.drawImage(video, 0, 0, w, h)
+          frames.push(canvas.toDataURL('image/jpeg', 0.45))
+        } catch {
+          // ignore frame
+        }
       }
-      if (!cancelled) setThumbs(frames)
+
+      if (!cancelled) {
+        setThumbs(frames)
+        setThumbsLoading(false)
+      }
+
+      video.removeAttribute('src')
+      video.load()
+      video = null
     }
 
-    void capture().catch(() => setThumbs([]))
+    void capture().catch(() => {
+      if (!cancelled) {
+        setThumbs([])
+        setThumbsLoading(false)
+      }
+    })
+
     return () => {
       cancelled = true
+      if (video) {
+        video.removeAttribute('src')
+        video.load()
+      }
     }
-  }, [src, max])
+  }, [src, duration, max, maxLen])
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -230,6 +310,9 @@ export function ClipTimeline({
               />
             ))}
           </div>
+          {thumbsLoading && thumbs.length === 0 ? (
+            <div className="pointer-events-none absolute inset-0 animate-pulse bg-white/5" />
+          ) : null}
           {/* Escurece fora da seleção */}
           <div
             className="pointer-events-none absolute inset-y-0 left-0 bg-black/55"

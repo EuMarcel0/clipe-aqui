@@ -1,7 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { S3Client, PutObjectCommand } from "npm:@aws-sdk/client-s3@3.758.0";
-import { getSignedUrl } from "npm:@aws-sdk/s3-request-presigner@3.758.0";
+import { AwsClient } from "npm:aws4fetch@1.0.20";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -74,37 +73,39 @@ Deno.serve(async (req) => {
     const key = `${user.id}/${clipId}/${Date.now()}-${safeName}`;
     const expiresIn = 900;
 
-    const s3 = new S3Client({
+    // aws4fetch + signQuery: compatível com PUT do browser (sem Content-Type / checksum na assinatura)
+    const aws = new AwsClient({
+      accessKeyId: r2AccessKey,
+      secretAccessKey: r2SecretKey,
+      service: "s3",
       region: "auto",
-      endpoint: r2Endpoint,
-      credentials: {
-        accessKeyId: r2AccessKey,
-        secretAccessKey: r2SecretKey,
-      },
-      forcePathStyle: true,
     });
 
-    const uploadUrl = await getSignedUrl(
-      s3,
-      new PutObjectCommand({
-        Bucket: r2Bucket,
-        Key: key,
-        ContentType: contentType,
-      }),
-      { expiresIn },
-    );
+    const pathKey = key
+      .split("/")
+      .map((part) => encodeURIComponent(part))
+      .join("/");
+    const objectUrl =
+      `${r2Endpoint}/${r2Bucket}/${pathKey}?X-Amz-Expires=${expiresIn}`;
+
+    const signed = await aws.sign(objectUrl, {
+      method: "PUT",
+      aws: { signQuery: true },
+    });
 
     const publicUrl = `${r2PublicBase}/${key}`;
 
     return json({
-      uploadUrl,
+      uploadUrl: signed.url,
       key,
       bucket: r2Bucket,
       publicUrl,
       contentType,
       expiresIn,
+      provider: "r2",
     });
   } catch (error) {
+    console.error("get-upload-url error:", error);
     return json(
       { error: error instanceof Error ? error.message : "Erro interno" },
       500,

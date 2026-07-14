@@ -151,7 +151,7 @@ export function VideoTrimmer({
           src={src}
           start={start}
           end={end}
-          duration={max}
+          duration={duration}
           current={current}
           onChangeRange={onChangeRange}
           onSeek={seekTo}

@@ -2,6 +2,8 @@ import type { CaptionSegment } from '../types'
 
 const MIN_DURATION = 0.4
 const HOLD_PAD = 0.35
+/** Hold curto só no fim da última legenda (não preencher até o fim do clip). */
+const LAST_EXIT_PAD = 0.12
 /** Lacunas menores que isso são preenchidas (mantém a legenda anterior até a próxima). */
 const FILL_GAP = 1.35
 
@@ -54,24 +56,23 @@ export function normalizeCaptionSegments(
     const cur = cleaned[i]
     const next = cleaned[i + 1]
     const start = cur.start
-    let end = Math.max(cur.end, start + MIN_DURATION) + HOLD_PAD
+    const isLast = !next
+    let end = Math.max(cur.end, start + MIN_DURATION)
 
-    if (next) {
+    if (isLast) {
+      // Não esticar até o fim do vídeo — some perto do fim da fala
+      end += LAST_EXIT_PAD
+    } else {
+      end += HOLD_PAD
       if (end >= next.start) {
         end = Math.max(start + MIN_DURATION, next.start - 0.04)
       } else if (next.start - end <= FILL_GAP) {
         end = next.start
       }
-    } else if (clipDuration > 0) {
-      const remain = clipDuration - end
-      if (remain > 0) {
-        const extra =
-          cleaned.length === 1
-            ? Math.min(remain - 0.05, Math.max(0.8, clipDuration * 0.2))
-            : Math.min(remain - 0.05, 1.2)
-        if (extra > 0) end += extra
-      }
-      end = Math.min(end, Math.max(start + MIN_DURATION, clipDuration - 0.05))
+    }
+
+    if (clipDuration > 0) {
+      end = Math.min(end, clipDuration)
     }
 
     out.push({ start, end: Math.max(end, start + MIN_DURATION), text: cur.text })
@@ -96,14 +97,14 @@ export function getActiveCaptionAt(
   const list = Array.isArray(segments) ? segments : []
   if (list.length === 0) return null
 
-  const t = Number.isFinite(time) ? Math.max(0, time) : 0
+  const t = Number.isFinite(time) ? time : 0
+  // Fora do clip (antes do corte) = nenhuma legenda
+  if (t < 0) return null
 
   const exact = list.find((c) => t >= c.start && t < c.end)
   if (exact) return exact
 
-  const atEnd = list.find((c) => t >= c.start && t <= c.end + 0.08)
-  if (atEnd) return atEnd
-
+  // Só preenche lacunas ENTRE legendas (não antes da 1ª, não depois da última)
   for (let i = 0; i < list.length - 1; i++) {
     const cur = list[i]
     const next = list[i + 1]

@@ -136,7 +136,8 @@ function normalizeSegments(
   if (cleaned.length === 0) return cleaned;
 
   const MIN_DURATION = 0.4;
-  const HOLD_PAD = 0.45;
+  const HOLD_PAD = 0.35;
+  const LAST_EXIT_PAD = 0.12;
   const FILL_GAP = 1.35;
   const out: Array<{ start: number; end: number; text: string }> = [];
 
@@ -144,23 +145,22 @@ function normalizeSegments(
     const cur = cleaned[i];
     const next = cleaned[i + 1];
     const start = Math.max(0, cur.start);
-    let end = Math.max(cur.end, start + MIN_DURATION) + HOLD_PAD;
+    const isLast = !next;
+    let end = Math.max(cur.end, start + MIN_DURATION);
 
-    if (next) {
+    if (isLast) {
+      end += LAST_EXIT_PAD;
+    } else {
+      end += HOLD_PAD;
       if (end >= next.start) {
         end = Math.max(start + MIN_DURATION, next.start - 0.04);
       } else if (next.start - end <= FILL_GAP) {
         end = next.start;
       }
-    } else if (clipDuration > 0) {
-      const remain = clipDuration - end;
-      if (remain > 0) {
-        const extra = cleaned.length === 1
-          ? Math.min(remain - 0.05, Math.max(1.2, clipDuration * 0.35))
-          : Math.min(remain - 0.05, 1.6);
-        if (extra > 0) end += extra;
-      }
-      end = Math.min(end, Math.max(start + MIN_DURATION, clipDuration - 0.05));
+    }
+
+    if (clipDuration > 0) {
+      end = Math.min(end, clipDuration);
     }
 
     out.push({ start, end: Math.max(end, start + MIN_DURATION), text: cur.text });

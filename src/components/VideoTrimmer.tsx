@@ -36,12 +36,30 @@ export function VideoTrimmer({
 
   rangeRef.current = { start, end }
 
-  const activeCaption = getActiveCaptionAt(captions, current - start)
+  const clipTime = current - start
+  const inClipRange = current >= start - 0.02 && current < end
+  const activeCaption = inClipRange
+    ? getActiveCaptionAt(captions, clipTime)
+    : null
   const max = duration > 0 ? duration : Math.max(end, start + 1, 1)
 
   useEffect(() => {
     if (durationProp > 0) setDuration(durationProp)
   }, [durationProp])
+
+  // Mantém o playhead no início do corte ao carregar o vídeo
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const snap = () => {
+      const s = rangeRef.current.start
+      if (video.paused && Math.abs(video.currentTime - s) > 0.15) {
+        video.currentTime = s
+        setCurrent(s)
+      }
+    }
+    if (video.readyState >= 1) snap()
+  }, [src])
 
   useEffect(() => {
     const video = videoRef.current
@@ -59,6 +77,7 @@ export function VideoTrimmer({
       if (t >= e - 0.05) {
         video.pause()
         video.currentTime = s
+        setCurrent(s)
         setPlaying(false)
       }
     }
@@ -66,16 +85,23 @@ export function VideoTrimmer({
     const onPause = () => setPlaying(false)
     const onPlay = () => setPlaying(true)
 
-    video.addEventListener('loadedmetadata', syncDuration)
+    const onMeta = () => {
+      syncDuration()
+      const s = rangeRef.current.start
+      video.currentTime = s
+      setCurrent(s)
+    }
+
+    video.addEventListener('loadedmetadata', onMeta)
     video.addEventListener('durationchange', syncDuration)
     video.addEventListener('timeupdate', onTime)
     video.addEventListener('pause', onPause)
     video.addEventListener('play', onPlay)
 
-    if (video.readyState >= 1) syncDuration()
+    if (video.readyState >= 1) onMeta()
 
     return () => {
-      video.removeEventListener('loadedmetadata', syncDuration)
+      video.removeEventListener('loadedmetadata', onMeta)
       video.removeEventListener('durationchange', syncDuration)
       video.removeEventListener('timeupdate', onTime)
       video.removeEventListener('pause', onPause)

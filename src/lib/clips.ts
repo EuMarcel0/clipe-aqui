@@ -3,9 +3,14 @@ import type { CaptionSegment, ClipRow } from '../types'
 
 const CLIPS_BUCKET = 'clips'
 
-/** Monta URL pública estável do Storage a partir da key salva. */
+/** URL pública do clip (R2 preferencial; fallback Supabase Storage legado). */
 export function resolveClipMediaUrl(clip: Pick<ClipRow, 's3_url' | 's3_key'>) {
+  if (clip.s3_url?.startsWith('http')) return clip.s3_url
+
   if (clip.s3_key) {
+    const r2Base = import.meta.env.VITE_R2_PUBLIC_BASE_URL?.replace(/\/$/, '')
+    if (r2Base) return `${r2Base}/${clip.s3_key}`
+
     const base = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '')
     if (base) {
       return `${base}/storage/v1/object/public/${CLIPS_BUCKET}/${clip.s3_key}`
@@ -173,7 +178,7 @@ export async function getUploadUrl(
 
   return data as {
     uploadUrl: string
-    token: string
+    token?: string
     key: string
     bucket: string
     publicUrl: string
@@ -195,7 +200,7 @@ export async function uploadClipToS3(
     throw new Error('Arquivo do clip inválido para upload')
   }
 
-  // Caminho preferencial: API do Storage com token assinado
+  // Legado: Supabase Storage signed upload
   if (upload.token && upload.bucket) {
     const { error } = await supabase.storage
       .from(upload.bucket)
@@ -208,11 +213,11 @@ export async function uploadClipToS3(
     return
   }
 
+  // R2 / S3: PUT na URL pré-assinada
   const res = await fetch(upload.uploadUrl, {
     method: 'PUT',
     headers: {
       'Content-Type': upload.contentType,
-      'x-upsert': 'true',
     },
     body: blob,
   })

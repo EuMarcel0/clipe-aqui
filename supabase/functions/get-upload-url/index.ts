@@ -1,5 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { S3Client, PutObjectCommand } from "npm:@aws-sdk/client-s3@3.758.0";
+import { getSignedUrl } from "npm:@aws-sdk/s3-request-presigner@3.758.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,10 +20,33 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+    if (!supabaseUrl || !anonKey) {
       return json({ error: "Variáveis SUPABASE_* ausentes no runtime" }, 500);
+    }
+
+    const r2AccessKey = Deno.env.get("R2_ACCESS_KEY_ID");
+    const r2SecretKey = Deno.env.get("R2_SECRET_ACCESS_KEY");
+    const r2AccountId = Deno.env.get("R2_ACCOUNT_ID");
+    const r2Bucket = Deno.env.get("R2_BUCKET") ?? "clipe-aqui-clips";
+    const r2PublicBase = (Deno.env.get("R2_PUBLIC_BASE_URL") ?? "").replace(
+      /\/$/,
+      "",
+    );
+    const r2Endpoint =
+      Deno.env.get("R2_ENDPOINT")?.replace(/\/$/, "") ??
+      (r2AccountId
+        ? `https://${r2AccountId}.r2.cloudflarestorage.com`
+        : "");
+
+    if (!r2AccessKey || !r2SecretKey || !r2Endpoint || !r2PublicBase) {
+      return json(
+        {
+          error:
+            "R2 não configurado. Defina R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT (ou R2_ACCOUNT_ID) e R2_PUBLIC_BASE_URL.",
+        },
+        500,
+      );
     }
 
     const userClient = createClient(supabaseUrl, anonKey, {
@@ -45,41 +70,39 @@ Deno.serve(async (req) => {
       return json({ error: "clipId e filename são obrigatórios" }, 400);
     }
 
-    const bucket = Deno.env.get("AWS_S3_BUCKET") ?? "clips";
     const safeName = String(filename).replace(/[^a-zA-Z0-9._-]/g, "_");
     const key = `${user.id}/${clipId}/${Date.now()}-${safeName}`;
+    const expiresIn = 900;
 
-    const admin = createClient(supabaseUrl, serviceRoleKey);
-    const { data, error } = await admin.storage
-      .from(bucket)
-      .createSignedUploadUrl(key, { upsert: true });
+    const s3 = new S3Client({
+      region: "auto",
+      endpoint: r2Endpoint,
+      credentials: {
+        accessKeyId: r2AccessKey,
+        secretAccessKey: r2SecretKey,
+      },
+      forcePathStyle: true,
+    });
 
-    if (error || !data) {
-      return json(
-        {
-          error: "Falha ao criar URL de upload",
-          detail: error?.message ?? "sem dados",
-        },
-        502,
-      );
-    }
+    const uploadUrl = await getSignedUrl(
+      s3,
+      new PutObjectCommand({
+        Bucket: r2Bucket,
+        Key: key,
+        ContentType: contentType,
+      }),
+      { expiresIn },
+    );
 
-    // Sempre usar a URL pública oficial do Storage (evita secret apontando para /s3)
-    const { data: publicData } = admin.storage.from(bucket).getPublicUrl(key);
-    const override = Deno.env.get("AWS_S3_PUBLIC_BASE_URL")?.trim();
-    const publicUrl =
-      override && override.includes("/object/public/")
-        ? `${override.replace(/\/$/, "")}/${key}`
-        : publicData.publicUrl;
+    const publicUrl = `${r2PublicBase}/${key}`;
 
     return json({
-      uploadUrl: data.signedUrl,
-      token: data.token,
+      uploadUrl,
       key,
-      bucket,
+      bucket: r2Bucket,
       publicUrl,
       contentType,
-      expiresIn: 900,
+      expiresIn,
     });
   } catch (error) {
     return json(

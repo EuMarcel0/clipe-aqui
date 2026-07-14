@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
   Check,
@@ -10,7 +11,13 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { deleteClips, listMyClips, resolveClipMediaUrl } from '../lib/clips'
+import {
+  LIBRARY_PAGE_INITIAL,
+  LIBRARY_PAGE_SIZE,
+  deleteClips,
+  listMyClips,
+  resolveClipMediaUrl,
+} from '../lib/clips'
 import { formatPrecise } from '../lib/format'
 import type { ClipRow } from '../types'
 import { SharePanel } from '../components/SharePanel'
@@ -28,6 +35,9 @@ export function LibraryPage() {
   })
   const [clips, setClips] = useState<ClipRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
+  const [nextOffset, setNextOffset] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<ClipRow | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
@@ -39,23 +49,71 @@ export function LibraryPage() {
   const [picked, setPicked] = useState<Set<string>>(() => new Set())
   const longPressTimer = useRef<number | null>(null)
   const longPressTriggered = useRef(false)
+  const loadMoreLock = useRef(false)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
+    loadMoreLock.current = false
     try {
-      const data = await listMyClips()
-      setClips(data)
+      const page = await listMyClips({
+        offset: 0,
+        limit: LIBRARY_PAGE_INITIAL,
+      })
+      setClips(page.clips)
+      setHasMore(page.hasMore)
+      setNextOffset(page.nextOffset)
+      setPicked(new Set())
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao carregar biblioteca')
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loading || loadingMore || loadMoreLock.current) return
+    loadMoreLock.current = true
+    setLoadingMore(true)
+    setError(null)
+    try {
+      const page = await listMyClips({
+        offset: nextOffset,
+        limit: LIBRARY_PAGE_SIZE,
+      })
+      setClips((prev) => {
+        const seen = new Set(prev.map((c) => c.id))
+        const appended = page.clips.filter((c) => !seen.has(c.id))
+        return appended.length ? [...prev, ...appended] : prev
+      })
+      setHasMore(page.hasMore)
+      setNextOffset(page.nextOffset)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao carregar mais projetos')
+    } finally {
+      setLoadingMore(false)
+      loadMoreLock.current = false
+    }
+  }, [hasMore, loading, loadingMore, nextOffset])
 
   useEffect(() => {
     void refresh()
-  }, [])
+  }, [refresh])
+
+  useEffect(() => {
+    const node = sentinelRef.current
+    if (!node || loading) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void loadMore()
+      },
+      { root: null, rootMargin: '240px 0px', threshold: 0 },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [loadMore, loading, clips.length, hasMore])
 
   useEffect(() => {
     if (!selected || pendingDeleteIds) return
@@ -74,6 +132,15 @@ export function LibraryPage() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [selectMode, pendingDeleteIds])
+
+  useEffect(() => {
+    if (!selected || selectMode) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [selected, selectMode])
 
   const pickedCount = picked.size
   const allSelected = clips.length > 0 && pickedCount === clips.length
@@ -284,10 +351,7 @@ export function LibraryPage() {
       ) : null}
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted">
-          <span className="h-5 w-5 animate-spin rounded-full border-2 border-ink/10 border-t-accent" />
-          Carregando…
-        </div>
+        <LibrarySkeletonGrid count={6} />
       ) : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
@@ -308,165 +372,203 @@ export function LibraryPage() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3">
-        {clips.map((clip) => {
-          const mediaUrl = resolveClipMediaUrl(clip)
-          const isPicked = picked.has(clip.id)
-          return (
-            <button
-              key={clip.id}
-              type="button"
-              onClick={() => onTileClick(clip)}
-              onPointerDown={() => onTilePointerDown(clip.id)}
-              onPointerUp={clearLongPress}
-              onPointerLeave={clearLongPress}
-              onPointerCancel={clearLongPress}
-              onContextMenu={(e) => {
-                e.preventDefault()
-                if (!selectMode) enterSelectMode(clip.id)
-                else togglePick(clip.id)
-              }}
-              className={`surface press slide-up overflow-hidden rounded-2xl text-left transition ring-offset-2 ring-offset-paper ${
-                selectMode && isPicked
-                  ? 'ring-2 ring-accent'
-                  : selectMode
-                    ? 'ring-1 ring-white/10'
-                    : ''
-              }`}
-            >
-              <div className="relative aspect-[9/14] bg-canvas">
-                {mediaUrl ? (
-                  <ClipThumbnail src={mediaUrl} />
-                ) : (
-                  <div className="grid h-full place-items-center text-white/30">
-                    <Film className="h-8 w-8" />
+      {!loading && clips.length > 0 ? (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            {clips.map((clip) => {
+              const mediaUrl = resolveClipMediaUrl(clip)
+              const isPicked = picked.has(clip.id)
+              return (
+                <button
+                  key={clip.id}
+                  type="button"
+                  onClick={() => onTileClick(clip)}
+                  onPointerDown={() => onTilePointerDown(clip.id)}
+                  onPointerUp={clearLongPress}
+                  onPointerLeave={clearLongPress}
+                  onPointerCancel={clearLongPress}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    if (!selectMode) enterSelectMode(clip.id)
+                    else togglePick(clip.id)
+                  }}
+                  className={`surface press overflow-hidden rounded-2xl text-left transition ring-offset-2 ring-offset-paper ${
+                    selectMode && isPicked
+                      ? 'ring-2 ring-accent'
+                      : selectMode
+                        ? 'ring-1 ring-white/10'
+                        : ''
+                  }`}
+                >
+                  <div className="relative aspect-[9/14] bg-canvas">
+                    {mediaUrl ? (
+                      <ClipThumbnail src={mediaUrl} />
+                    ) : (
+                      <div className="grid h-full place-items-center text-white/30">
+                        <Film className="h-8 w-8" />
+                      </div>
+                    )}
+                    {selectMode ? (
+                      <span
+                        className={`absolute left-2 top-2 grid h-6 w-6 place-items-center rounded-full ring-2 ${
+                          isPicked
+                            ? 'bg-accent text-white ring-accent'
+                            : 'bg-black/45 text-transparent ring-white/80'
+                        }`}
+                        aria-hidden
+                      >
+                        <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                      </span>
+                    ) : null}
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-3 pb-3 pt-10">
+                      <p className="truncate text-sm font-semibold text-white">
+                        {clip.title}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-white/65">
+                        {formatPrecise(
+                          (clip.end_seconds ?? 0) - clip.start_seconds,
+                        )}
+                        {clip.is_public ? ' · público' : ''}
+                      </p>
+                    </div>
                   </div>
-                )}
-                {selectMode ? (
-                  <span
-                    className={`absolute left-2 top-2 grid h-6 w-6 place-items-center rounded-full ring-2 ${
-                      isPicked
-                        ? 'bg-accent text-white ring-accent'
-                        : 'bg-black/45 text-transparent ring-white/80'
-                    }`}
-                    aria-hidden
-                  >
-                    <Check className="h-3.5 w-3.5" strokeWidth={3} />
-                  </span>
-                ) : null}
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-3 pb-3 pt-10">
-                  <p className="truncate text-sm font-semibold text-white">
-                    {clip.title}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-white/65">
-                    {formatPrecise((clip.end_seconds ?? 0) - clip.start_seconds)}
-                    {clip.is_public ? ' · público' : ''}
-                  </p>
-                </div>
-              </div>
-            </button>
-          )
-        })}
-      </div>
+                </button>
+              )
+            })}
+            {loadingMore ? (
+              <>
+                <LibrarySkeletonCard />
+                <LibrarySkeletonCard />
+              </>
+            ) : null}
+          </div>
 
-      {selected && !selectMode ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
-          <button
-            type="button"
-            aria-label="Fechar"
-            className="absolute inset-0 bg-black/50 backdrop-blur-[2px]"
-            onClick={() => setSelected(null)}
-          />
-          <div
-            className="slide-up relative z-10 flex w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-white/8 bg-surface shadow-2xl sm:rounded-3xl"
-            style={{
-              maxHeight:
-                'min(92dvh, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)))',
-            }}
-          >
-            <div className="flex shrink-0 items-start justify-between gap-3 px-4 pb-2 pt-4 sm:px-5 sm:pt-5">
-              <div className="min-w-0">
-                <p className="truncate font-display text-lg font-bold tracking-tight">
-                  {selected.title}
-                </p>
-                <p className="text-xs text-muted">
-                  {formatPrecise(
-                    (selected.end_seconds ?? 0) - selected.start_seconds,
-                  )}
-                </p>
-              </div>
+          <div ref={sentinelRef} className="h-8 w-full" aria-hidden />
+
+          {loadingMore ? (
+            <p className="py-2 text-center text-xs text-muted">Carregando mais…</p>
+          ) : null}
+          {!hasMore && clips.length > LIBRARY_PAGE_INITIAL ? (
+            <p className="py-2 text-center text-xs text-muted">Fim dos projetos</p>
+          ) : null}
+        </>
+      ) : null}
+
+      {selected && !selectMode
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-label={selected.title}
+            >
               <button
                 type="button"
+                aria-label="Fechar"
+                className="absolute inset-0 bg-black/55"
                 onClick={() => setSelected(null)}
-                className="press grid h-9 w-9 shrink-0 place-items-center rounded-full bg-lift text-muted ring-1 ring-white/10"
+              />
+              <div
+                className="relative z-10 flex w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-white/8 bg-surface shadow-2xl sm:rounded-3xl"
+                style={{
+                  height:
+                    'min(90dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 0.75rem))',
+                  maxHeight:
+                    'min(90dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 0.75rem))',
+                }}
               >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+                <div className="flex shrink-0 items-start justify-between gap-3 px-4 pb-2 pt-[max(1rem,env(safe-area-inset-top))] sm:px-5 sm:pt-5">
+                  <div className="min-w-0">
+                    <p className="truncate font-display text-lg font-bold tracking-tight">
+                      {selected.title}
+                    </p>
+                    <p className="text-xs text-muted">
+                      {formatPrecise(
+                        (selected.end_seconds ?? 0) - selected.start_seconds,
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(null)}
+                    className="press grid h-9 w-9 shrink-0 place-items-center rounded-full bg-lift text-muted ring-1 ring-white/10"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5 sm:pb-5">
-              {selectedUrl ? (
-                <ClipPlayer
-                  src={selectedUrl}
-                  captions={selected.captions}
-                  aspectClassName="mx-auto aspect-[9/16] max-h-[min(42dvh,360px)] w-full object-contain sm:max-h-[50dvh]"
-                  autoPlay
-                />
-              ) : (
-                <p className="rounded-2xl bg-mist px-4 py-8 text-center text-sm text-muted">
-                  Vídeo ainda não disponível.
-                </p>
-              )}
+                <div
+                  className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 sm:px-5"
+                  style={{
+                    WebkitOverflowScrolling: 'touch',
+                    paddingBottom:
+                      'calc(1.25rem + env(safe-area-inset-bottom, 0px))',
+                  }}
+                >
+                  {selectedUrl ? (
+                    <ClipPlayer
+                      src={selectedUrl}
+                      captions={selected.captions}
+                      aspectClassName="mx-auto aspect-[9/16] max-h-[min(36dvh,280px)] w-full object-contain sm:max-h-[46dvh]"
+                      autoPlay
+                    />
+                  ) : (
+                    <p className="rounded-2xl bg-mist px-4 py-8 text-center text-sm text-muted">
+                      Vídeo ainda não disponível.
+                    </p>
+                  )}
 
-              <div className="mt-3 flex gap-2">
-                {selectedUrl ? (
-                  <>
+                  <div className="mt-3 flex gap-2">
+                    {selectedUrl ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="flex-1"
+                          loading={downloadingId === selected.id}
+                          onClick={() => void download(selected)}
+                        >
+                          <Download className="h-4 w-4" />
+                          Baixar
+                        </Button>
+                        <a
+                          href={selectedUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="press inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 bg-lift py-3 text-sm font-semibold"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                          Abrir
+                        </a>
+                      </>
+                    ) : null}
                     <Button
                       type="button"
                       variant="ghost"
-                      className="flex-1"
-                      loading={downloadingId === selected.id}
-                      onClick={() => void download(selected)}
+                      className="!px-3 text-danger"
+                      onClick={() => setPendingDeleteIds([selected.id])}
                     >
-                      <Download className="h-4 w-4" />
-                      Baixar
+                      <Trash2 className="h-4 w-4" />
                     </Button>
-                    <a
-                      href={selectedUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="press inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 bg-lift py-3 text-sm font-semibold"
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                      Abrir
-                    </a>
-                  </>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="!px-3 text-danger"
-                  onClick={() => setPendingDeleteIds([selected.id])}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
+                  </div>
 
-              <div className="mt-3">
-                <SharePanel
-                  clip={selected}
-                  onUpdated={(updated) => {
-                    setSelected(updated)
-                    setClips((prev) =>
-                      prev.map((c) => (c.id === updated.id ? updated : c)),
-                    )
-                  }}
-                />
+                  <div className="mt-3 pb-2">
+                    <SharePanel
+                      clip={selected}
+                      onUpdated={(updated) => {
+                        setSelected(updated)
+                        setClips((prev) =>
+                          prev.map((c) => (c.id === updated.id ? updated : c)),
+                        )
+                      }}
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
 
       <ConfirmDialog
         open={Boolean(pendingDeleteIds?.length)}
@@ -483,6 +585,29 @@ export function LibraryPage() {
         }}
         onConfirm={() => void confirmRemove()}
       />
+    </div>
+  )
+}
+
+function LibrarySkeletonGrid({ count }: { count: number }) {
+  return (
+    <div className="grid grid-cols-2 gap-3" aria-busy="true" aria-label="Carregando projetos">
+      {Array.from({ length: count }, (_, i) => (
+        <LibrarySkeletonCard key={i} />
+      ))}
+    </div>
+  )
+}
+
+function LibrarySkeletonCard() {
+  return (
+    <div className="surface overflow-hidden rounded-2xl">
+      <div className="relative aspect-[9/14] animate-pulse bg-lift">
+        <div className="absolute inset-x-0 bottom-0 space-y-2 bg-gradient-to-t from-black/50 to-transparent px-3 pb-3 pt-10">
+          <div className="h-3.5 w-3/4 rounded bg-white/15" />
+          <div className="h-2.5 w-1/3 rounded bg-white/10" />
+        </div>
+      </div>
     </div>
   )
 }

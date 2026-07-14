@@ -21,20 +21,45 @@ export function resolveClipMediaUrl(clip: Pick<ClipRow, 's3_url' | 's3_key'>) {
   return clip.s3_url
 }
 
-export async function listMyClips() {
+export const LIBRARY_PAGE_INITIAL = 50
+export const LIBRARY_PAGE_SIZE = 20
+
+export type ListMyClipsResult = {
+  clips: ClipRow[]
+  hasMore: boolean
+  nextOffset: number
+}
+
+export async function listMyClips(options?: {
+  offset?: number
+  limit?: number
+}): Promise<ListMyClipsResult> {
+  const offset = Math.max(0, options?.offset ?? 0)
+  const limit = Math.max(1, options?.limit ?? LIBRARY_PAGE_INITIAL)
+
   const {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) throw new Error('Faça login para ver seus projetos')
 
+  // Busca limit+1 para saber se há próxima página sem count extra
   const { data, error } = await supabase
     .from('clips')
     .select('*')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
+    .range(offset, offset + limit)
 
   if (error) throw error
-  return (data ?? []) as ClipRow[]
+  const rows = (data ?? []) as ClipRow[]
+  const hasMore = rows.length > limit
+  const clips = hasMore ? rows.slice(0, limit) : rows
+
+  return {
+    clips,
+    hasMore,
+    nextOffset: offset + clips.length,
+  }
 }
 
 export async function getClipByShareToken(token: string) {

@@ -108,8 +108,39 @@ export async function updateClip(
 }
 
 export async function deleteClip(id: string) {
-  const { error } = await supabase.from('clips').delete().eq('id', id)
-  if (error) throw error
+  await deleteClips([id])
+}
+
+/** Remove um ou mais clips do banco e do R2 (via edge function). */
+export async function deleteClips(clipIds: string[]) {
+  const ids = [...new Set(clipIds.map((id) => id.trim()).filter(Boolean))]
+  if (ids.length === 0) return
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+  if (!session) throw new Error('Faça login para excluir clips')
+
+  const base = import.meta.env.VITE_SUPABASE_URL
+  const anon = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+  const res = await fetch(`${base}/functions/v1/delete-clips`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+      apikey: anon,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ clipIds: ids }),
+  })
+
+  const payload = (await res.json().catch(() => ({}))) as {
+    error?: string
+    deleted?: string[]
+  }
+
+  if (!res.ok) {
+    throw new Error(payload.error || 'Não foi possível excluir os clips')
+  }
 }
 
 export async function transcribeAudio(audio: Blob, durationSeconds: number) {

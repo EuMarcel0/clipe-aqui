@@ -1,7 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Download, ExternalLink, Film, Plus, Trash2, X } from 'lucide-react'
-import { deleteClip, listMyClips, resolveClipMediaUrl } from '../lib/clips'
+import {
+  Check,
+  CheckSquare,
+  Download,
+  ExternalLink,
+  Film,
+  Plus,
+  Trash2,
+  X,
+} from 'lucide-react'
+import { deleteClips, listMyClips, resolveClipMediaUrl } from '../lib/clips'
 import { formatPrecise } from '../lib/format'
 import type { ClipRow } from '../types'
 import { SharePanel } from '../components/SharePanel'
@@ -16,8 +25,14 @@ export function LibraryPage() {
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<ClipRow | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
-  const [pendingDelete, setPendingDelete] = useState<ClipRow | null>(null)
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(
+    null,
+  )
   const [deleting, setDeleting] = useState(false)
+  const [selectMode, setSelectMode] = useState(false)
+  const [picked, setPicked] = useState<Set<string>>(() => new Set())
+  const longPressTimer = useRef<number | null>(null)
+  const longPressTriggered = useRef(false)
 
   const refresh = async () => {
     setLoading(true)
@@ -37,22 +52,69 @@ export function LibraryPage() {
   }, [])
 
   useEffect(() => {
-    if (!selected || pendingDelete) return
+    if (!selected || pendingDeleteIds) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setSelected(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selected, pendingDelete])
+  }, [selected, pendingDeleteIds])
+
+  useEffect(() => {
+    if (!selectMode) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !pendingDeleteIds) exitSelectMode()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectMode, pendingDeleteIds])
+
+  const pickedCount = picked.size
+  const allSelected = clips.length > 0 && pickedCount === clips.length
+
+  const pendingDeleteClips = useMemo(() => {
+    if (!pendingDeleteIds?.length) return []
+    const idSet = new Set(pendingDeleteIds)
+    return clips.filter((c) => idSet.has(c.id))
+  }, [clips, pendingDeleteIds])
+
+  const exitSelectMode = () => {
+    setSelectMode(false)
+    setPicked(new Set())
+  }
+
+  const enterSelectMode = (firstId?: string) => {
+    setSelected(null)
+    setSelectMode(true)
+    if (firstId) setPicked(new Set([firstId]))
+  }
+
+  const togglePick = (id: string) => {
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setPicked(new Set())
+      return
+    }
+    setPicked(new Set(clips.map((c) => c.id)))
+  }
 
   const confirmRemove = async () => {
-    if (!pendingDelete) return
+    if (!pendingDeleteIds?.length) return
     setDeleting(true)
     setError(null)
     try {
-      await deleteClip(pendingDelete.id)
-      setPendingDelete(null)
+      await deleteClips(pendingDeleteIds)
+      setPendingDeleteIds(null)
       setSelected(null)
+      exitSelectMode()
       await refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao excluir o clip')
@@ -85,22 +147,119 @@ export function LibraryPage() {
     }
   }
 
+  const clearLongPress = () => {
+    if (longPressTimer.current != null) {
+      window.clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }
+
+  const onTilePointerDown = (clipId: string) => {
+    longPressTriggered.current = false
+    clearLongPress()
+    longPressTimer.current = window.setTimeout(() => {
+      longPressTriggered.current = true
+      if (!selectMode) enterSelectMode(clipId)
+      else togglePick(clipId)
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        try {
+          navigator.vibrate(12)
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 420)
+  }
+
+  const onTileClick = (clip: ClipRow) => {
+    if (longPressTriggered.current) {
+      longPressTriggered.current = false
+      return
+    }
+    if (selectMode) {
+      togglePick(clip.id)
+      return
+    }
+    setSelected(clip)
+  }
+
   const selectedUrl = selected ? resolveClipMediaUrl(selected) : null
+  const deleteTitle =
+    pendingDeleteClips.length > 1
+      ? `Excluir ${pendingDeleteClips.length} clips?`
+      : 'Excluir este clip?'
+  const deleteDescription =
+    pendingDeleteClips.length > 1
+      ? 'Os vídeos serão removidos dos seus projetos e do armazenamento. Essa ação não pode ser desfeita.'
+      : 'Essa ação não pode ser desfeita. O vídeo será removido dos seus projetos e do armazenamento.'
 
   return (
-    <div className="space-y-4">
+    <div className={`space-y-4 ${selectMode && pickedCount > 0 ? 'pb-24' : ''}`}>
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight">Projetos</h1>
-          <p className="mt-1 text-sm text-muted">Seus clips salvos</p>
+          <h1 className="font-display text-2xl font-bold tracking-tight">
+            {selectMode
+              ? pickedCount > 0
+                ? `${pickedCount} selecionado${pickedCount === 1 ? '' : 's'}`
+                : 'Selecionar'
+              : 'Projetos'}
+          </h1>
+          <p className="mt-1 text-sm text-muted">
+            {selectMode
+              ? 'Toque para marcar · segure para selecionar'
+              : 'Seus clips salvos'}
+          </p>
         </div>
-        <Link
-          to="/criar"
-          className="press inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-2 text-xs font-semibold text-white"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Novo
-        </Link>
+        <div className="flex items-center gap-2">
+          {clips.length > 0 ? (
+            selectMode ? (
+              <>
+                <button
+                  type="button"
+                  onClick={toggleSelectAll}
+                  className="press rounded-full bg-lift px-3 py-2 text-xs font-semibold text-ink ring-1 ring-white/10"
+                >
+                  {allSelected ? 'Limpar' : 'Todos'}
+                </button>
+                <button
+                  type="button"
+                  onClick={exitSelectMode}
+                  className="press grid h-9 w-9 place-items-center rounded-full bg-lift text-muted ring-1 ring-white/10"
+                  aria-label="Cancelar seleção"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => enterSelectMode()}
+                  className="press grid h-9 w-9 place-items-center rounded-full bg-lift text-muted ring-1 ring-white/10"
+                  aria-label="Selecionar"
+                  title="Selecionar"
+                >
+                  <CheckSquare className="h-4 w-4" />
+                </button>
+                <Link
+                  to="/criar"
+                  className="press inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-2 text-xs font-semibold text-white"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Novo
+                </Link>
+              </>
+            )
+          ) : (
+            <Link
+              to="/criar"
+              className="press inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-2 text-xs font-semibold text-white"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Novo
+            </Link>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -131,12 +290,28 @@ export function LibraryPage() {
       <div className="grid grid-cols-2 gap-3">
         {clips.map((clip) => {
           const mediaUrl = resolveClipMediaUrl(clip)
+          const isPicked = picked.has(clip.id)
           return (
             <button
               key={clip.id}
               type="button"
-              onClick={() => setSelected(clip)}
-              className="surface press slide-up overflow-hidden rounded-2xl text-left"
+              onClick={() => onTileClick(clip)}
+              onPointerDown={() => onTilePointerDown(clip.id)}
+              onPointerUp={clearLongPress}
+              onPointerLeave={clearLongPress}
+              onPointerCancel={clearLongPress}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                if (!selectMode) enterSelectMode(clip.id)
+                else togglePick(clip.id)
+              }}
+              className={`surface press slide-up overflow-hidden rounded-2xl text-left transition ring-offset-2 ring-offset-paper ${
+                selectMode && isPicked
+                  ? 'ring-2 ring-accent'
+                  : selectMode
+                    ? 'ring-1 ring-white/10'
+                    : ''
+              }`}
             >
               <div className="relative aspect-[9/14] bg-canvas">
                 {mediaUrl ? (
@@ -146,8 +321,22 @@ export function LibraryPage() {
                     <Film className="h-8 w-8" />
                   </div>
                 )}
+                {selectMode ? (
+                  <span
+                    className={`absolute left-2 top-2 grid h-6 w-6 place-items-center rounded-full ring-2 ${
+                      isPicked
+                        ? 'bg-accent text-white ring-accent'
+                        : 'bg-black/45 text-transparent ring-white/80'
+                    }`}
+                    aria-hidden
+                  >
+                    <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                  </span>
+                ) : null}
                 <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-3 pb-3 pt-10">
-                  <p className="truncate text-sm font-semibold text-white">{clip.title}</p>
+                  <p className="truncate text-sm font-semibold text-white">
+                    {clip.title}
+                  </p>
                   <p className="mt-0.5 text-[11px] text-white/65">
                     {formatPrecise((clip.end_seconds ?? 0) - clip.start_seconds)}
                     {clip.is_public ? ' · público' : ''}
@@ -159,7 +348,26 @@ export function LibraryPage() {
         })}
       </div>
 
-      {selected ? (
+      {selectMode && pickedCount > 0 ? (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-surface/95 px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur-md">
+          <div className="mx-auto flex max-w-lg items-center gap-2">
+            <p className="min-w-0 flex-1 truncate text-sm text-muted">
+              {pickedCount} vídeo{pickedCount === 1 ? '' : 's'}
+            </p>
+            <Button
+              type="button"
+              variant="danger"
+              className="!px-4"
+              onClick={() => setPendingDeleteIds([...picked])}
+            >
+              <Trash2 className="h-4 w-4" />
+              Excluir
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {selected && !selectMode ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
           <button
             type="button"
@@ -174,7 +382,9 @@ export function LibraryPage() {
                   {selected.title}
                 </p>
                 <p className="text-xs text-muted">
-                  {formatPrecise((selected.end_seconds ?? 0) - selected.start_seconds)}
+                  {formatPrecise(
+                    (selected.end_seconds ?? 0) - selected.start_seconds,
+                  )}
                 </p>
               </div>
               <button
@@ -227,7 +437,7 @@ export function LibraryPage() {
                 type="button"
                 variant="ghost"
                 className="!px-3 text-danger"
-                onClick={() => setPendingDelete(selected)}
+                onClick={() => setPendingDeleteIds([selected.id])}
               >
                 <Trash2 className="h-4 w-4" />
               </Button>
@@ -238,7 +448,9 @@ export function LibraryPage() {
                 clip={selected}
                 onUpdated={(updated) => {
                   setSelected(updated)
-                  setClips((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+                  setClips((prev) =>
+                    prev.map((c) => (c.id === updated.id ? updated : c)),
+                  )
                 }}
               />
             </div>
@@ -247,15 +459,19 @@ export function LibraryPage() {
       ) : null}
 
       <ConfirmDialog
-        open={Boolean(pendingDelete)}
-        title="Excluir este clip?"
-        description="Essa ação não pode ser desfeita. O vídeo será removido dos seus projetos."
-        confirmLabel="Excluir"
+        open={Boolean(pendingDeleteIds?.length)}
+        title={deleteTitle}
+        description={deleteDescription}
+        confirmLabel={
+          pendingDeleteClips.length > 1
+            ? `Excluir ${pendingDeleteClips.length}`
+            : 'Excluir'
+        }
         cancelLabel="Cancelar"
         danger
         loading={deleting}
         onCancel={() => {
-          if (!deleting) setPendingDelete(null)
+          if (!deleting) setPendingDeleteIds(null)
         }}
         onConfirm={() => void confirmRemove()}
       />

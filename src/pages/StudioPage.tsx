@@ -21,6 +21,7 @@ import { getErrorMessage } from '../lib/errors'
 import {
   alignCaptionsToAudioDuration,
   normalizeCaptionSegments,
+  refineCaptionsWithWords,
 } from '../lib/captions'
 import {
   FREE_MAX_CLIP_SECONDS,
@@ -214,7 +215,8 @@ export function StudioPage() {
         expectedDuration,
         audioDuration,
       )
-      setCaptions(normalizeCaptionSegments(aligned, expectedDuration))
+      const withWords = refineCaptionsWithWords(aligned, result.words)
+      setCaptions(normalizeCaptionSegments(withWords, expectedDuration))
       setCostUsd(result.estimated_cost_usd)
       setStep('captions')
     } catch (err) {

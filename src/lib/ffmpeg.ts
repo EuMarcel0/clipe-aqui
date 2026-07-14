@@ -498,22 +498,15 @@ async function extractAudioRangeBrowser(
         resolve(new Blob(chunks, { type: mime || 'audio/webm' }))
     })
 
-    // Seek + priming: evita gravar “vazio” no início (dessincroniza o Whisper)
+    // Seek preciso + estabiliza antes de gravar (evita Whisper em t=0 com fala atrasada)
     const seekTo = Math.max(0, start)
     video.currentTime = seekTo
     await waitMedia(video, 'seeked', 6_000).catch(() => undefined)
-    await sleep(120)
-
-    try {
-      await video.play()
-      // Descarta um pouco de áudio instável pós-seek
-      await sleep(180)
-      video.pause()
+    await sleep(200)
+    if (Math.abs(video.currentTime - seekTo) > 0.25) {
       video.currentTime = seekTo
       await waitMedia(video, 'seeked', 4_000).catch(() => undefined)
-      await sleep(80)
-    } catch {
-      // segue mesmo assim
+      await sleep(120)
     }
 
     recorder.start(100)

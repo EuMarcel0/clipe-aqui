@@ -75,6 +75,7 @@ Deno.serve(async (req) => {
     body.append("model", "whisper-1");
     body.append("response_format", "verbose_json");
     body.append("timestamp_granularities[]", "segment");
+    body.append("timestamp_granularities[]", "word");
     if (language) body.append("language", language);
 
     const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
@@ -89,7 +90,7 @@ Deno.serve(async (req) => {
     }
 
     const data = await res.json();
-    const rawSegments = (data.segments ?? []).map(
+    let rawSegments = (data.segments ?? []).map(
       (s: { start: number; end: number; text: string }) => ({
         start: s.start,
         end: s.end,
@@ -105,6 +106,16 @@ Deno.serve(async (req) => {
       });
     }
 
+    const words = (data.words ?? [])
+      .map((w: { start?: number; end?: number; word?: string }) => ({
+        start: Number(w.start) || 0,
+        end: Number(w.end) || 0,
+        word: String(w.word ?? "").trim(),
+      }))
+      .filter((w: { word: string }) => w.word.length > 0);
+
+    rawSegments = refineWithWords(rawSegments, words);
+
     const segments = normalizeSegments(rawSegments, durationSeconds);
 
     const minutes = Math.max(durationSeconds, 1) / 60;
@@ -115,6 +126,7 @@ Deno.serve(async (req) => {
     return json({
       text: data.text ?? "",
       segments,
+      words,
       vtt,
       model: "whisper-1",
       estimated_cost_usd: estimatedCostUsd,
@@ -127,6 +139,37 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+function refineWithWords(
+  segments: Array<{ start: number; end: number; text: string }>,
+  words: Array<{ start: number; end: number; word: string }>,
+) {
+  if (!segments.length || !words.length) return segments;
+
+  return segments.map((seg, index) => {
+    const inSeg = words.filter((w) => {
+      const mid = (w.start + w.end) / 2;
+      return mid >= seg.start - 0.15 && mid <= seg.end + 0.15;
+    });
+
+    if (!inSeg.length) {
+      if (index === 0 && seg.start <= 0.12 && words[0].start > seg.start + 0.05) {
+        return {
+          ...seg,
+          start: words[0].start,
+          end: Math.max(seg.end, words[0].end),
+        };
+      }
+      return seg;
+    }
+
+    return {
+      ...seg,
+      start: inSeg[0].start,
+      end: Math.max(inSeg[inSeg.length - 1].end, inSeg[0].start + 0.4),
+    };
+  });
+}
 
 function normalizeSegments(
   segments: Array<{ start: number; end: number; text: string }>,

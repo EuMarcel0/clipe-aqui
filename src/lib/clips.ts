@@ -173,6 +173,7 @@ export async function transcribeAudio(audio: Blob, durationSeconds: number) {
   return payload as {
     text: string
     segments: CaptionSegment[]
+    words?: Array<{ start: number; end: number; word: string }>
     vtt: string
     model: string
     estimated_cost_usd: number

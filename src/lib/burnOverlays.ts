@@ -192,25 +192,38 @@ async function recordSegment(
       0,
     )
 
-    // Safari: captureStream(0) + requestFrame é flaky; Chrome: fps=0 + requestFrame
-    // evita vídeo congelar com áudio seguindo.
-    const useManualFrames = !isApple()
-    const captureStream =
-      typeof canvas.captureStream === 'function'
-        ? canvas.captureStream(useManualFrames ? 0 : 24)
-        : null
+    // captureStream(0)+requestFrame: no Chrome, fps>0 congela o vídeo e deixa o áudio seguir.
+    let useManualFrames = true
+    let captureStream =
+      typeof canvas.captureStream === 'function' ? canvas.captureStream(0) : null
     if (!captureStream) {
       throw new Error('Este navegador não suporte exportar vídeo com legendas.')
     }
 
-    const canvasTrack = captureStream.getVideoTracks()[0] as
+    let canvasTrack = captureStream.getVideoTracks()[0] as
       | (MediaStreamTrack & { requestFrame?: () => void })
       | undefined
 
+    if (typeof canvasTrack?.requestFrame !== 'function') {
+      // Safari antigo: sem requestFrame, usa fps fixo
+      useManualFrames = false
+      try {
+        canvasTrack?.stop()
+      } catch {
+        /* ignore */
+      }
+      captureStream = canvas.captureStream(24)
+      canvasTrack = captureStream.getVideoTracks()[0] as
+        | (MediaStreamTrack & { requestFrame?: () => void })
+        | undefined
+    }
+
     const tracks: MediaStreamTrack[] = [...captureStream.getVideoTracks()]
+    const activeCanvasTrack = tracks[0] as
+      | (MediaStreamTrack & { requestFrame?: () => void })
+      | undefined
 
     // Áudio: preferir Web Audio (Safari ignora/corta áudio de vídeo muted via captureStream).
-    // createMediaElementSource desconecta os alto-falantes → pode desmutar sem eco.
     let audioCtx: AudioContext | null = null
     const audioWired = await wireExportAudio(video, tracks)
     audioCtx = audioWired.audioCtx
@@ -259,19 +272,33 @@ async function recordSegment(
     const segmentDuration = Math.max(0.2, end - start)
     options.onProgress?.(0.04)
 
-    // Safari/iOS: timeslice corrompe/corta o áudio no meio do arquivo.
-    // Sem timeslice → um único blob no stop (mais estável no mobile).
+    // Espera 1º frame decodificado antes de gravar (evita faixa de vídeo morta)
+    await waitForVideoFrame(video)
+    paintFrame(
+      ctx,
+      video,
+      srcW,
+      srcH,
+      width,
+      height,
+      options.target,
+      options.watermark,
+      options.captions,
+      0,
+    )
+    pushCanvasFrame(ctx, activeCanvasTrack, useManualFrames)
+
+    // Safari/iOS: timeslice corta o áudio. Desktop: timeslice curto ajuda o encoder.
     if (isApple() || isMobile()) {
       recorder.start()
     } else {
-      recorder.start(1000)
+      recorder.start(250)
     }
-    pushCanvasFrame(ctx, canvasTrack, useManualFrames)
+    pushCanvasFrame(ctx, activeCanvasTrack, useManualFrames)
 
     try {
       await video.play()
     } catch {
-      // Autoplay bloqueou com som: tenta muted só se não houver track de áudio via Web Audio
       if (!audioCtx) {
         video.muted = true
         await video.play()
@@ -288,10 +315,17 @@ async function recordSegment(
 
     await new Promise<void>((resolve, reject) => {
       let tick: number | null = null
+      let rvfcId: number | null = null
       let finished = false
       let lastProgressAt = 0
-      const FPS = 24
+      let lastPaintAt = 0
+      const FPS = 30
       const frameMs = 1000 / FPS
+      const videoWithRvfc = video as HTMLVideoElement & {
+        requestVideoFrameCallback?: (cb: () => void) => number
+        cancelVideoFrameCallback?: (id: number) => void
+      }
+      const hasRvfc = typeof videoWithRvfc.requestVideoFrameCallback === 'function'
 
       const deadline = window.setTimeout(
         () => {
@@ -315,6 +349,7 @@ async function recordSegment(
       const cleanup = () => {
         window.clearTimeout(deadline)
         if (tick != null) window.clearInterval(tick)
+        if (rvfcId != null) videoWithRvfc.cancelVideoFrameCallback?.(rvfcId)
         video.removeEventListener('ended', onEnded)
         video.removeEventListener('error', onError)
         video.removeEventListener('timeupdate', onTime)
@@ -335,7 +370,8 @@ async function recordSegment(
           options.captions,
           clipTime,
         )
-        pushCanvasFrame(ctx, canvasTrack, useManualFrames)
+        pushCanvasFrame(ctx, activeCanvasTrack, useManualFrames)
+        lastPaintAt = performance.now()
       }
 
       const finish = () => {
@@ -358,10 +394,8 @@ async function recordSegment(
         if (video.currentTime >= end - 0.05) finish()
       }
       const onWaiting = () => {
-        // Buffering: mantém frames no canvas para o vídeo não “morrer” no WebM
-        if (!finished) {
-          drawAt(Math.max(0, video.currentTime - start))
-        }
+        // Buffering: reenvia frame p/ o encoder não matar a faixa de vídeo
+        if (!finished) drawAt(Math.max(0, video.currentTime - start))
       }
 
       video.addEventListener('ended', onEnded)
@@ -393,20 +427,33 @@ async function recordSegment(
         }
       }
 
-      // Clock próprio + requestFrame: não depende do RAF (engasga com React/GC)
-      // nem do captureStream(fps), que para de emitir se o canvas “não muda”.
-      tick = window.setInterval(paintOnce, frameMs)
+      // Primário: 1 paint por frame decodificado (Chrome recomendado p/ captureStream(0))
+      if (hasRvfc) {
+        const schedule = () => {
+          rvfcId = videoWithRvfc.requestVideoFrameCallback!(() => {
+            if (finished) return
+            paintOnce()
+            if (!finished) schedule()
+          })
+        }
+        schedule()
+      }
+
+      // Keepalive: se RVFC/decoder parar, áudio Web Audio continua — sem isso o vídeo congela
+      tick = window.setInterval(() => {
+        if (finished) return
+        if (performance.now() - lastPaintAt >= frameMs * 0.9) paintOnce()
+      }, Math.max(16, Math.floor(frameMs)))
       paintOnce()
     })
 
-    await sleep(300)
-    pushCanvasFrame(ctx, canvasTrack, useManualFrames)
+    await sleep(350)
+    pushCanvasFrame(ctx, activeCanvasTrack, useManualFrames)
     if (recorder.state !== 'inactive') recorder.stop()
 
     const blob = await withTimeout(stopped, 12_000, 'Falha ao finalizar a gravação do clip')
     await audioCtx?.close().catch(() => undefined)
 
-    // Para tracks para liberar encoder
     for (const t of tracks) {
       try {
         t.stop()
@@ -431,11 +478,17 @@ function pushCanvasFrame(
 ) {
   // Marca o bitmap como “sujo” mesmo se o frame do vídeo for igual
   const prev = ctx.globalAlpha
-  ctx.globalAlpha = 0.01
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, 1, 1)
+  ctx.globalAlpha = 0.02
+  ctx.fillStyle = '#010101'
+  ctx.fillRect(0, 0, 2, 2)
   ctx.globalAlpha = prev
-  if (manual) track?.requestFrame?.()
+  if (manual && typeof track?.requestFrame === 'function') {
+    try {
+      track.requestFrame()
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /**
@@ -659,11 +712,38 @@ async function ensureVideoReady(video: HTMLVideoElement) {
 async function seekVideo(video: HTMLVideoElement, time: number) {
   const duration = Number.isFinite(video.duration) ? video.duration : time + 1
   const target = Math.min(Math.max(0, time), Math.max(0, duration - 0.05))
-  if (Math.abs(video.currentTime - target) < 0.08) return
+  if (Math.abs(video.currentTime - target) < 0.08) {
+    await waitForVideoFrame(video)
+    return
+  }
   video.currentTime = target
   await waitFor(video, 'seeked', 5_000).catch(() => undefined)
-  // Se seeked não veio, espera um pouco mesmo assim
   await sleep(80)
+  await waitForVideoFrame(video)
+}
+
+/** Espera o decoder emitir um frame real (ou timeout curto). */
+function waitForVideoFrame(video: HTMLVideoElement, timeoutMs = 800) {
+  const v = video as HTMLVideoElement & {
+    requestVideoFrameCallback?: (cb: () => void) => number
+    cancelVideoFrameCallback?: (id: number) => void
+  }
+  if (typeof v.requestVideoFrameCallback !== 'function') {
+    return sleep(40)
+  }
+  return new Promise<void>((resolve) => {
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      resolve()
+    }
+    const id = v.requestVideoFrameCallback!(() => finish())
+    window.setTimeout(() => {
+      v.cancelVideoFrameCallback?.(id)
+      finish()
+    }, timeoutMs)
+  })
 }
 
 async function probeDuration(blob: Blob) {

@@ -7,6 +7,12 @@ const LAST_EXIT_PAD = 0.12
 /** Lacunas menores que isso são preenchidas (mantém a legenda anterior até a próxima). */
 const FILL_GAP = 1.35
 
+export type CaptionWord = {
+  start: number
+  end: number
+  word: string
+}
+
 /**
  * Quando a extração de áudio perde o começo do trecho, o Whisper marca a fala
  * cedo demais. Se o áudio ficou mais curto que o clip, deslocamos os timestamps.
@@ -19,8 +25,8 @@ export function alignCaptionsToAudioDuration(
   if (!segments.length || clipDuration <= 0 || audioDuration <= 0) return segments
 
   const missingHead = clipDuration - audioDuration
-  // Lag típico do MediaRecorder / seek incompleto no mobile
-  if (missingHead >= 0.2 && missingHead <= 12) {
+  // Threshold baixo: MediaRecorder costuma “comer” 80–300ms no seek
+  if (missingHead >= 0.08 && missingHead <= 12) {
     return segments.map((s) => ({
       ...s,
       start: Math.max(0, s.start + missingHead),
@@ -29,6 +35,58 @@ export function alignCaptionsToAudioDuration(
   }
 
   return segments
+}
+
+/**
+ * Ajusta starts/ends com timestamps por palavra (Whisper).
+ * Corrige o caso clássico: 1ª legenda em 0.0 enquanto a fala começa depois.
+ */
+export function refineCaptionsWithWords(
+  segments: CaptionSegment[],
+  words: CaptionWord[] | null | undefined,
+): CaptionSegment[] {
+  if (!segments.length || !words?.length) return segments
+
+  const usable = words
+    .map((w) => ({
+      start: Math.max(0, Number(w.start) || 0),
+      end: Math.max(0, Number(w.end) || 0),
+      word: String(w.word ?? '').trim(),
+    }))
+    .filter((w) => w.word.length > 0)
+    .sort((a, b) => a.start - b.start)
+
+  if (!usable.length) return segments
+
+  return segments.map((seg, index) => {
+    const segStart = Math.max(0, Number(seg.start) || 0)
+    const segEnd = Math.max(segStart, Number(seg.end) || 0)
+
+    // Palavras cujo centro cai dentro do segmento (com folga)
+    const inSeg = usable.filter((w) => {
+      const mid = (w.start + w.end) / 2
+      return mid >= segStart - 0.15 && mid <= segEnd + 0.15
+    })
+
+    if (!inSeg.length) {
+      // 1ª legenda sem palavras no range: usa a 1ª palavra global se o start era ~0
+      if (index === 0 && segStart <= 0.12) {
+        const firstWord = usable[0]
+        if (firstWord.start > segStart + 0.05) {
+          return {
+            ...seg,
+            start: firstWord.start,
+            end: Math.max(segEnd, firstWord.end),
+          }
+        }
+      }
+      return seg
+    }
+
+    const start = inSeg[0].start
+    const end = Math.max(inSeg[inSeg.length - 1].end, start + MIN_DURATION)
+    return { ...seg, start, end }
+  })
 }
 
 /**
@@ -55,12 +113,12 @@ export function normalizeCaptionSegments(
   for (let i = 0; i < cleaned.length; i++) {
     const cur = cleaned[i]
     const next = cleaned[i + 1]
+    // Nunca puxar o start para trás (1ª legenda aparecendo cedo demais)
     const start = cur.start
     const isLast = !next
     let end = Math.max(cur.end, start + MIN_DURATION)
 
     if (isLast) {
-      // Não esticar até o fim do vídeo — some perto do fim da fala
       end += LAST_EXIT_PAD
     } else {
       end += HOLD_PAD
@@ -81,8 +139,9 @@ export function normalizeCaptionSegments(
   if (clipDuration > 0) {
     return out.map((s) => ({
       ...s,
+      // Só garante que start não passa do fim do clip — não altera timing cedo
       start: Math.min(s.start, Math.max(0, clipDuration - MIN_DURATION)),
-      end: Math.min(s.end, clipDuration),
+      end: Math.min(Math.max(s.end, s.start + MIN_DURATION), clipDuration),
     }))
   }
 
@@ -98,7 +157,6 @@ export function getActiveCaptionAt(
   if (list.length === 0) return null
 
   const t = Number.isFinite(time) ? time : 0
-  // Fora do clip (antes do corte) = nenhuma legenda
   if (t < 0) return null
 
   const exact = list.find((c) => t >= c.start && t < c.end)

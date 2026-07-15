@@ -53,8 +53,6 @@ export async function exportClipFromSource(
     captionLook: options.captionLook ?? DEFAULT_CAPTION_LOOK,
     watermark: needsPass ? mark : null,
     target: needsPass ? target : null,
-    // Sem overlays e sem reels: ainda corta, só sem desenhar textos
-    scaleDown: !needsPass,
     onProgress: (r) => options.onProgress?.(0.02 + r * 0.98),
   })
 
@@ -97,7 +95,6 @@ export async function finalizeClipExport(
     captionLook: options.captionLook ?? DEFAULT_CAPTION_LOOK,
     watermark: mark,
     target,
-    scaleDown: false,
     onProgress: (r) => options.onProgress?.(0.02 + r * 0.98),
   })
 
@@ -147,7 +144,6 @@ type RecordOptions = {
   captionLook: CaptionLook
   watermark: WatermarkConfig | null
   target: { width: number; height: number } | null
-  scaleDown: boolean
   onProgress?: (ratio: number) => void
 }
 
@@ -190,7 +186,8 @@ async function recordSegment(
     let height = options.target?.height ?? srcH
 
     if (!options.target) {
-      const maxEdge = isMobile() ? 960 : options.scaleDown ? 1280 : Math.max(srcW, srcH)
+      // Preserva a resolução original; só limita em celular (encoder aguenta menos)
+      const maxEdge = isMobile() ? 1280 : Math.max(srcW, srcH)
       const scale = Math.min(1, maxEdge / Math.max(srcW, srcH))
       width = Math.max(2, Math.round((srcW * scale) / 2) * 2)
       height = Math.max(2, Math.round((srcH * scale) / 2) * 2)
@@ -201,6 +198,8 @@ async function recordSegment(
     canvas.height = height
     const ctx = canvas.getContext('2d', { alpha: false })
     if (!ctx) throw new Error('Canvas indisponível')
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
 
     await seekVideo(video, start)
     // Frame inicial para acordar captureStream
@@ -255,11 +254,14 @@ async function recordSegment(
     audioCtx = audioWired.audioCtx
 
     const mimeType = pickRecorderMime()
-    const bits = isMobile()
-      ? 2_000_000
-      : options.target
-        ? 3_500_000
-        : 3_000_000
+    // Bitrate proporcional à resolução (~0.12 bpp @30fps) para não degradar
+    // vídeos grandes; teto menor no celular pelo custo do encoder.
+    const bits = Math.round(
+      Math.min(
+        isMobile() ? 8_000_000 : 16_000_000,
+        Math.max(2_500_000, width * height * 30 * 0.12),
+      ),
+    )
 
     let recorder: MediaRecorder
     try {

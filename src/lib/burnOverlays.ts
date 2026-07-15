@@ -186,8 +186,9 @@ async function recordSegment(
     let height = options.target?.height ?? srcH
 
     if (!options.target) {
-      // Preserva a resolução original; só limita em celular (encoder aguenta menos)
-      const maxEdge = isMobile() ? 1280 : Math.max(srcW, srcH)
+      // Teto 1920: acima disso o encoder em tempo real atrasa frames e o
+      // áudio (gravado em tempo real) sai de sincronia com a imagem.
+      const maxEdge = isMobile() ? 1280 : 1920
       const scale = Math.min(1, maxEdge / Math.max(srcW, srcH))
       width = Math.max(2, Math.round((srcW * scale) / 2) * 2)
       height = Math.max(2, Math.round((srcH * scale) / 2) * 2)
@@ -254,12 +255,12 @@ async function recordSegment(
     audioCtx = audioWired.audioCtx
 
     const mimeType = pickRecorderMime()
-    // Bitrate proporcional à resolução (~0.12 bpp @30fps) para não degradar
-    // vídeos grandes; teto menor no celular pelo custo do encoder.
+    // Bitrate proporcional à resolução (~0.1 bpp @30fps). Teto moderado:
+    // bitrate alto demais sobrecarrega o encoder e dessincroniza o áudio.
     const bits = Math.round(
       Math.min(
-        isMobile() ? 8_000_000 : 16_000_000,
-        Math.max(2_500_000, width * height * 30 * 0.12),
+        isMobile() ? 6_000_000 : 10_000_000,
+        Math.max(2_500_000, width * height * 30 * 0.1),
       ),
     )
 

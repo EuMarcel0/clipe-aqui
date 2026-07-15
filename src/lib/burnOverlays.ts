@@ -5,7 +5,7 @@ import type {
   WatermarkConfig,
 } from '../types'
 import { DEFAULT_CAPTION_LOOK } from '../types'
-import { getActiveCaptionAt, normalizeCaptionSegments } from './captions'
+import { getActiveCaptionAt } from './captions'
 import { getReelsExportFrame, drawContainFrame } from './exportPresets'
 
 type ExportOptions = {
@@ -37,10 +37,9 @@ export async function exportClipFromSource(
       : null
 
   const clipDuration = Math.max(0.2, end - start)
-  const usable = normalizeCaptionSegments(
-    (options.captions ?? []).filter((c) => c.text.trim().length > 0),
-    clipDuration,
-  )
+  // Legendas já chegam normalizadas do Studio — normalizar de novo aqui
+  // esticava os tempos e deixava o vídeo salvo diferente da prévia.
+  const usable = prepareBurnCaptions(options.captions ?? [], clipDuration)
 
   const needsPass =
     options.preset === 'reels' || usable.length > 0 || Boolean(mark)
@@ -83,10 +82,7 @@ export async function finalizeClipExport(
       : null
 
   const clipDuration = Math.max(0.2, await probeDuration(videoBlob))
-  const usable = normalizeCaptionSegments(
-    (options.captions ?? []).filter((c) => c.text.trim().length > 0),
-    clipDuration,
-  )
+  const usable = prepareBurnCaptions(options.captions ?? [], clipDuration)
 
   const needsPass =
     options.preset === 'reels' || usable.length > 0 || Boolean(mark)
@@ -125,6 +121,25 @@ export async function burnCaptionsIntoVideo(
     watermark,
     onProgress,
   })
+}
+
+/**
+ * Mantém as legendas EXATAMENTE como na prévia (mesmos timestamps).
+ * Só filtra vazias e limita ao fim do clip — sem re-normalizar.
+ */
+function prepareBurnCaptions(
+  captions: CaptionSegment[],
+  clipDuration: number,
+): CaptionSegment[] {
+  return captions
+    .map((c) => ({
+      start: Math.max(0, Number(c.start) || 0),
+      end: Math.max(0, Number(c.end) || 0),
+      text: String(c.text ?? '').trim(),
+    }))
+    .filter((c) => c.text.length > 0 && c.end > c.start && c.start < clipDuration)
+    .map((c) => ({ ...c, end: Math.min(c.end, clipDuration) }))
+    .sort((a, b) => a.start - b.start)
 }
 
 type RecordOptions = {
@@ -723,7 +738,9 @@ function wrapText(text: string, maxChars: number) {
     }
   }
   if (current) lines.push(current)
-  return lines.slice(0, 3)
+  // Nunca descartar palavras: a prévia mostra o texto inteiro,
+  // então o vídeo salvo também precisa mostrar.
+  return lines
 }
 
 function pickRecorderMime() {

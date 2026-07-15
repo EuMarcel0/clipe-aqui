@@ -122,6 +122,8 @@ export function StudioPage() {
     billing && billing.credits > 0 ? null : (billing?.max_clip_seconds ?? FREE_MAX_CLIP_SECONDS)
   const maxFileBytes =
     billing && billing.credits > 0 ? null : FREE_MAX_FILE_BYTES
+  // Evita "piscada" dos avisos de limite enquanto o saldo ainda carrega
+  const limitsKnown = billing !== null
 
   const onPickFile = (next: File | null) => {
     if (objectUrl) URL.revokeObjectURL(objectUrl)
@@ -428,7 +430,7 @@ export function StudioPage() {
                 {dragOver ? 'Solte o vídeo aqui' : 'Escolher vídeo'}
               </p>
               <p className="mt-1 text-sm text-muted">Arraste e solte ou toque · MP4, MOV ou WebM</p>
-              {maxFileBytes ? (
+              {limitsKnown && maxFileBytes ? (
                 <p className="mt-2 text-xs text-muted">
                   Plano free: arquivo até {FREE_MAX_FILE_MB} MB · corte máximo de{' '}
                   {maxClipSeconds ?? FREE_MAX_CLIP_SECONDS}s. Com créditos, o limite some.
@@ -487,7 +489,7 @@ export function StudioPage() {
             maxClipSeconds={maxClipSeconds}
           />
 
-          {maxClipSeconds || maxFileBytes ? (
+          {limitsKnown && (maxClipSeconds || maxFileBytes) ? (
             <p className="text-xs text-muted">
               Plano free:
               {maxFileBytes ? ` arquivo até ${FREE_MAX_FILE_MB} MB` : ''}

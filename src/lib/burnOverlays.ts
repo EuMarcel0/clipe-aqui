@@ -355,7 +355,6 @@ async function recordSegment(
       }
     })
 
-    const segmentDuration = Math.max(0.2, end - start)
     options.onProgress?.(0.04)
 
     // Espera 1º frame decodificado antes de gravar (evita faixa de vídeo morta)

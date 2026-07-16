@@ -44,7 +44,8 @@ export async function exportClipFromSource(
   const needsPass =
     options.preset === 'reels' || usable.length > 0 || Boolean(mark)
 
-  const target = options.preset === 'reels' ? getReelsExportFrame() : null
+  const target =
+    options.preset === 'reels' ? getReelsExportFrame(clipDuration) : null
 
   options.onProgress?.(0.02)
 
@@ -87,7 +88,7 @@ export async function finalizeClipExport(
 
   if (!needsPass) return videoBlob
 
-  const target = options.preset === 'reels' ? getReelsExportFrame() : null
+  const target = options.preset === 'reels' ? getReelsExportFrame(clipDuration) : null
   options.onProgress?.(0.02)
 
   const exported = await recordSegment(videoBlob, 0, clipDuration, {
@@ -147,6 +148,54 @@ type RecordOptions = {
   onProgress?: (ratio: number) => void
 }
 
+/**
+ * Perfil de encode adaptativo: clips longos / celular precisam ser mais leves,
+ * senão o MediaRecorder perde frames (vídeo “travando”) ou estoura timeout.
+ */
+function getExportEncodeProfile(
+  clipSeconds: number,
+  mobile: boolean,
+  isReels: boolean,
+) {
+  const longClip = clipSeconds >= 45
+  const veryLong = clipSeconds >= 75
+
+  if (mobile && veryLong) {
+    return {
+      maxEdge: isReels ? 960 : 960,
+      fps: 24,
+      bpp: 0.07,
+      minBitrate: 1_500_000,
+      maxBitrate: 3_500_000,
+    }
+  }
+  if (mobile || veryLong) {
+    return {
+      maxEdge: isReels ? 1280 : 1280,
+      fps: 24,
+      bpp: 0.08,
+      minBitrate: 1_800_000,
+      maxBitrate: 4_500_000,
+    }
+  }
+  if (longClip) {
+    return {
+      maxEdge: isReels ? 1280 : 1600,
+      fps: 24,
+      bpp: 0.09,
+      minBitrate: 2_000_000,
+      maxBitrate: 6_000_000,
+    }
+  }
+  return {
+    maxEdge: mobile ? 1280 : isReels ? 1920 : 1920,
+    fps: 30,
+    bpp: 0.1,
+    minBitrate: 2_500_000,
+    maxBitrate: mobile ? 5_000_000 : 8_000_000,
+  }
+}
+
 async function recordSegment(
   source: File | Blob,
   start: number,
@@ -182,16 +231,26 @@ async function recordSegment(
 
     const srcW = video.videoWidth
     const srcH = video.videoHeight
+    const segmentDuration = Math.max(0.2, end - start)
+    const mobile = isMobile()
+    const longClip = segmentDuration >= 45
+    const profile = getExportEncodeProfile(segmentDuration, mobile, Boolean(options.target))
+
     let width = options.target?.width ?? srcW
     let height = options.target?.height ?? srcH
 
     if (!options.target) {
-      // Teto 1920: acima disso o encoder em tempo real atrasa frames e o
-      // áudio (gravado em tempo real) sai de sincronia com a imagem.
-      const maxEdge = isMobile() ? 1280 : 1920
-      const scale = Math.min(1, maxEdge / Math.max(srcW, srcH))
+      const scale = Math.min(1, profile.maxEdge / Math.max(srcW, srcH))
       width = Math.max(2, Math.round((srcW * scale) / 2) * 2)
       height = Math.max(2, Math.round((srcH * scale) / 2) * 2)
+    } else if (longClip || mobile) {
+      // Se o target Reels ainda for pesado demais, limita pela maior borda do perfil
+      const edge = Math.max(width, height)
+      if (edge > profile.maxEdge) {
+        const scale = profile.maxEdge / edge
+        width = Math.max(2, Math.round((width * scale) / 2) * 2)
+        height = Math.max(2, Math.round((height * scale) / 2) * 2)
+      }
     }
 
     const canvas = document.createElement('canvas')
@@ -200,7 +259,7 @@ async function recordSegment(
     const ctx = canvas.getContext('2d', { alpha: false })
     if (!ctx) throw new Error('Canvas indisponível')
     ctx.imageSmoothingEnabled = true
-    ctx.imageSmoothingQuality = 'high'
+    ctx.imageSmoothingQuality = mobile || longClip ? 'medium' : 'high'
 
     await seekVideo(video, start)
     // Frame inicial para acordar captureStream
@@ -238,7 +297,7 @@ async function recordSegment(
       } catch {
         /* ignore */
       }
-      captureStream = canvas.captureStream(24)
+      captureStream = canvas.captureStream(profile.fps)
       canvasTrack = captureStream.getVideoTracks()[0] as
         | (MediaStreamTrack & { requestFrame?: () => void })
         | undefined
@@ -255,12 +314,10 @@ async function recordSegment(
     audioCtx = audioWired.audioCtx
 
     const mimeType = pickRecorderMime()
-    // Bitrate proporcional à resolução (~0.1 bpp @30fps). Teto moderado:
-    // bitrate alto demais sobrecarrega o encoder e dessincroniza o áudio.
     const bits = Math.round(
       Math.min(
-        isMobile() ? 6_000_000 : 10_000_000,
-        Math.max(2_500_000, width * height * 30 * 0.1),
+        profile.maxBitrate,
+        Math.max(profile.minBitrate, width * height * profile.fps * profile.bpp),
       ),
     )
 
@@ -318,11 +375,11 @@ async function recordSegment(
     )
     pushCanvasFrame(ctx, activeCanvasTrack, useManualFrames)
 
-    // Safari/iOS: timeslice corta o áudio. Desktop: timeslice curto ajuda o encoder.
-    if (isApple() || isMobile()) {
+    // Safari/iOS: timeslice corta o áudio. Desktop/Android: timeslice ajuda memória em clips longos.
+    if (isApple()) {
       recorder.start()
     } else {
-      recorder.start(250)
+      recorder.start(longClip || mobile ? 1000 : 250)
     }
     pushCanvasFrame(ctx, activeCanvasTrack, useManualFrames)
 
@@ -349,7 +406,8 @@ async function recordSegment(
       let finished = false
       let lastProgressAt = 0
       let lastPaintAt = 0
-      const FPS = 30
+      let lastClipTime = -1
+      const FPS = profile.fps
       const frameMs = 1000 / FPS
       const videoWithRvfc = video as HTMLVideoElement & {
         requestVideoFrameCallback?: (cb: () => void) => number
@@ -357,6 +415,8 @@ async function recordSegment(
       }
       const hasRvfc = typeof videoWithRvfc.requestVideoFrameCallback === 'function'
 
+      // Permite ~2.8× o tempo real (encoder lento no celular) + folga fixa
+      const deadlineMs = Math.ceil(segmentDuration * 2800) + (mobile ? 60_000 : 40_000)
       const deadline = window.setTimeout(
         () => {
           if (!finished) {
@@ -368,12 +428,14 @@ async function recordSegment(
             cleanup()
             reject(
               new Error(
-                'A exportação demorou demais no celular. Tente um trecho mais curto.',
+                mobile
+                  ? 'A exportação demorou demais neste celular. Tente um trecho mais curto ou use o computador.'
+                  : 'A exportação demorou demais. Tente um trecho mais curto.',
               ),
             )
           }
         },
-        Math.ceil(segmentDuration * 1000) + 25_000,
+        deadlineMs,
       )
 
       const cleanup = () => {
@@ -403,6 +465,7 @@ async function recordSegment(
         )
         pushCanvasFrame(ctx, activeCanvasTrack, useManualFrames)
         lastPaintAt = performance.now()
+        lastClipTime = clipTime
       }
 
       const finish = () => {
@@ -425,8 +488,11 @@ async function recordSegment(
         if (video.currentTime >= end - 0.05) finish()
       }
       const onWaiting = () => {
-        // Buffering: reenvia frame p/ o encoder não matar a faixa de vídeo
-        if (!finished) drawAt(Math.max(0, video.currentTime - start))
+        // Buffering: reenvia o último tempo conhecido (não inventa frame novo)
+        if (!finished && lastClipTime >= 0) {
+          pushCanvasFrame(ctx, activeCanvasTrack, useManualFrames)
+          lastPaintAt = performance.now()
+        }
       }
 
       video.addEventListener('ended', onEnded)
@@ -449,6 +515,11 @@ async function recordSegment(
           return
         }
         const clipTime = Math.max(0, t - start)
+        // Evita gravar o mesmo instante várias vezes (causa “travadas” no arquivo final)
+        if (lastClipTime >= 0 && Math.abs(clipTime - lastClipTime) < 1 / (FPS * 2)) {
+          lastPaintAt = performance.now()
+          return
+        }
         drawAt(clipTime)
 
         const now = performance.now()
@@ -470,11 +541,11 @@ async function recordSegment(
         schedule()
       }
 
-      // Keepalive: se RVFC/decoder parar, áudio Web Audio continua — sem isso o vídeo congela
+      // Keepalive mais espaçado: só quando o decoder/RVFC parou de emitir
       tick = window.setInterval(() => {
         if (finished) return
-        if (performance.now() - lastPaintAt >= frameMs * 0.9) paintOnce()
-      }, Math.max(16, Math.floor(frameMs)))
+        if (performance.now() - lastPaintAt >= frameMs * 1.5) paintOnce()
+      }, Math.max(24, Math.floor(frameMs)))
       paintOnce()
     })
 
@@ -482,7 +553,12 @@ async function recordSegment(
     pushCanvasFrame(ctx, activeCanvasTrack, useManualFrames)
     if (recorder.state !== 'inactive') recorder.stop()
 
-    const blob = await withTimeout(stopped, 12_000, 'Falha ao finalizar a gravação do clip')
+    const stopTimeout = Math.min(60_000, Math.max(15_000, Math.ceil(segmentDuration * 200)))
+    const blob = await withTimeout(
+      stopped,
+      stopTimeout,
+      'Falha ao finalizar a gravação do clip',
+    )
     await audioCtx?.close().catch(() => undefined)
 
     for (const t of tracks) {

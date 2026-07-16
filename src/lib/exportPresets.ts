@@ -6,8 +6,14 @@ export const REELS_FRAME = {
   height: 1920,
 } as const
 
-/** Resolução usada no export no browser (mais leve no celular). */
-export function getReelsExportFrame() {
+type ReelsFrame = { width: number; height: number }
+
+/**
+ * Resolução do export Reels.
+ * Vídeos longos / celular usam frame menor — MediaRecorder em tempo real
+ * congela e dessincroniza se a resolução for alta demais.
+ */
+export function getReelsExportFrame(clipSeconds = 0): ReelsFrame {
   const mobile =
     typeof navigator !== 'undefined' &&
     (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ||
@@ -18,13 +24,16 @@ export function getReelsExportFrame() {
     typeof (navigator as Navigator & { deviceMemory?: number }).deviceMemory === 'number' &&
     ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8) <= 4
 
-  if (lowMem) {
-    return { width: 540, height: 960 } as const
+  const longClip = clipSeconds >= 45
+  const veryLong = clipSeconds >= 75
+
+  if (lowMem || (mobile && veryLong)) {
+    return { width: 540, height: 960 }
   }
-  if (mobile) {
-    return { width: 720, height: 1280 } as const
+  if (mobile || longClip) {
+    return { width: 720, height: 1280 }
   }
-  return REELS_FRAME
+  return { ...REELS_FRAME }
 }
 
 export function exportPresetLabel(preset: ExportPreset) {
